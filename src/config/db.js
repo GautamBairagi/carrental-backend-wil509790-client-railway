@@ -15,3 +15,7 @@ prisma.$on('query', (e) => {
 });
 
 module.exports = prisma;
+
+
+
+
