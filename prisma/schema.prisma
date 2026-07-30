@@ -1,0 +1,931 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  OPERATIONS_MANAGER
+  DRIVER
+}
+
+enum UserStatus {
+  Active
+  Pending
+  Inactive
+}
+
+enum PaymentMethod {
+  CREDIT_DEBIT_CARD
+  ZELLE
+  CASH_APP
+  PAY_AT_DELIVERY
+}
+
+enum BookingStatus {
+  Draft
+  Pending_Review
+  License_Verification_Pending
+  License_Verified
+  Contract_Sent
+  Contract_Signed
+  Payment_Pending
+  Payment_Completed
+  Driver_Assigned
+  Delivery_Scheduled
+  Vehicle_Delivered
+  Active_Rental
+  Return_Scheduled
+  Vehicle_Returned
+  Completed
+  Cancelled
+  Rejected
+  No_Show
+}
+
+enum ContractStatus {
+  Draft
+  Sent
+  Viewed
+  Signed
+  Rejected
+  Expired
+}
+
+enum SignatureType {
+  TYPE
+  DRAW
+}
+
+model User {
+  id            String      @id @default(uuid())
+  employee_id   String      @unique @db.VarChar(20)
+  name          String      @db.VarChar(255)
+  username      String?     @unique @db.VarChar(100)
+  email         String      @unique @db.VarChar(255)
+  phone         String      @db.VarChar(30)
+  password_hash String      @db.VarChar(255)
+  role          Role
+  status        UserStatus
+  avatar_url    String?     @db.VarChar(2048)
+  is_deleted    Boolean     @default(false)
+  created_at    DateTime    @default(now())
+  updated_at    DateTime    @updatedAt
+  last_login    DateTime?
+
+  created_by String?
+  updated_by String?
+
+  creator User? @relation("UserCreator", fields: [created_by], references: [id])
+  updater User? @relation("UserUpdater", fields: [updated_by], references: [id])
+
+  created_users User[] @relation("UserCreator")
+  updated_users User[] @relation("UserUpdater")
+
+  refresh_tokens        RefreshToken[]
+  password_reset_tokens PasswordResetToken[]
+  driver_profile        DriverProfile?
+  booking_notes         BookingNote[]
+  status_histories      BookingStatusHistory[]
+  contract_histories    ContractHistory[]
+  received_transactions PaymentTransaction[]   @relation("ReceivedTransactions")
+  payment_status_changes PaymentHistory[]       @relation("PaymentStatusChanges")
+  delivery_status_histories DeliveryStatusHistory[]
+  completed_checklists  DeliveryChecklist[]
+  approved_return_charges ReturnCharge[]
+  return_status_histories ReturnStatusHistory[]
+  notifications_created Notification[]
+  notification_recipients NotificationRecipient[]
+  notification_preference NotificationPreference?
+  updated_settings SystemSetting[]
+  audit_logs AuditLog[]
+
+  @@index([employee_id])
+  @@index([email])
+  @@index([username])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  user_id    String
+  token_hash String   @db.VarChar(255)
+  expires_at DateTime
+  revoked    Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id         String   @id @default(uuid())
+  user_id    String
+  token_hash String   @db.VarChar(255)
+  expires_at DateTime
+  used       Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("password_reset_tokens")
+}
+
+model DriverProfile {
+  id                      String             @id @default(uuid())
+  user_id                 String             @unique
+  hire_date               DateTime
+  driving_license_id      String             @unique @db.VarChar(100)
+  commercial_license_id   String?            @db.VarChar(100)
+  license_expiry_date     DateTime
+  home_address            String             @db.Text
+  emergency_contact_name  String             @db.VarChar(255)
+  emergency_contact_phone String             @db.VarChar(30)
+  created_at              DateTime           @default(now())
+  updated_at              DateTime           @updatedAt
+
+  availability            DriverAvailability @default(Offline)
+  status                  DriverStatus       @default(Active)
+  assigned_vehicle_id     String?            @db.VarChar(36)
+  current_booking_id      String?            @db.VarChar(50)
+
+  total_assignments       Int                @default(0)
+  completed_assignments   Int                @default(0)
+  cancelled_assignments   Int                @default(0)
+  average_rating          Decimal            @default(5.00) @db.Decimal(3, 2)
+  on_time_percentage      Decimal            @default(100.00) @db.Decimal(5, 2)
+
+  user             User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  documents        DriverDocument[]
+  assigned_vehicle Vehicle?         @relation(fields: [assigned_vehicle_id], references: [id], onDelete: SetNull)
+  bookings         Booking[]
+  deliveries       Delivery[]
+  returns          VehicleReturn[]
+
+  @@map("driver_profiles")
+}
+
+enum DriverAvailability {
+  Available
+  Busy
+  Break
+  Offline
+}
+
+enum DriverStatus {
+  Active
+  Inactive
+  Suspended
+}
+
+model DriverDocument {
+  id                       String        @id @default(uuid())
+  driver_profile_id        String
+  document_type            String        @db.VarChar(100)
+  file_url                 String        @db.VarChar(2048)
+  expiry_date              DateTime
+  status                   String        @default("Pending") @db.VarChar(50)
+  notification_days_before Int           @default(30)
+  created_at              DateTime      @default(now())
+
+  driver_profile           DriverProfile @relation(fields: [driver_profile_id], references: [id], onDelete: Cascade)
+
+  @@index([driver_profile_id])
+  @@map("driver_documents")
+}
+
+enum VehicleStatus {
+  Available
+  Reserved
+  In_Trip
+  Maintenance
+  Out_Of_Service
+  Sold
+}
+
+model Vehicle {
+  id                 String               @id @default(uuid())
+  plate_number       String               @unique @db.VarChar(20)
+  vin                String               @unique @db.VarChar(50)
+  make               String               @db.VarChar(100)
+  model              String               @db.VarChar(100)
+  year               Int
+  color              String               @db.VarChar(50)
+  category           String               @db.VarChar(100)
+  daily_rental_rate  Decimal              @db.Decimal(10, 2)
+  status             VehicleStatus        @default(Available)
+  is_deleted         Boolean              @default(false)
+  created_at         DateTime             @default(now())
+  updated_at         DateTime             @updatedAt
+  created_by         String?
+  updated_by         String?
+
+  // Performance Information
+  transmission       String               @default("Automatic")
+  seats              Int                  @default(4)
+  fuel_type          String               @default("Premium Gasoline")
+  top_speed          Int                  @default(150)
+  range              Int                  @default(300)
+  horsepower         Int                  @default(500)
+  doors_count        Int                  @default(4)
+
+  // Rental Settings
+  security_deposit   Decimal              @db.Decimal(10, 2) @default(2500.00)
+  minimum_rental_days Int                 @default(2)
+
+  // Sale Listing
+  is_for_sale        Boolean              @default(false)
+  sale_price         Decimal?             @db.Decimal(10, 2)
+  sale_description   String?              @db.Text
+
+  // Service & Maintenance / Compliance Expiries
+  insurance_expiry   DateTime?
+  registration_expiry DateTime?
+  last_service_date  DateTime?
+  next_service_date  DateTime?
+
+  documents          VehicleDocument[]
+  maintenances       VehicleMaintenance[]
+  media              VehicleMedia[]
+  driver_profiles    DriverProfile[]
+  bookings           Booking[]
+  contracts          Contract[]
+  deliveries         Delivery[]
+  returns            VehicleReturn[]
+  sale_inquiries     VehicleSaleInquiry[]
+
+  @@index([status])
+  @@index([category])
+  @@index([make])
+  @@index([model])
+  @@index([plate_number])
+  @@map("vehicles")
+}
+
+model VehicleDocument {
+  id              String   @id @default(uuid())
+  vehicle_id      String
+  document_type   String   @db.VarChar(100)
+  document_number String   @db.VarChar(100)
+  expiry_date     DateTime
+  file_url        String   @db.VarChar(2048)
+  status          String   @default("Active") @db.VarChar(50)
+  created_at      DateTime @default(now())
+
+  vehicle         Vehicle  @relation(fields: [vehicle_id], references: [id], onDelete: Cascade)
+
+  @@index([vehicle_id])
+  @@map("vehicle_documents")
+}
+
+model VehicleMaintenance {
+  id                   String   @id @default(uuid())
+  vehicle_id           String
+  service_date         DateTime
+  next_service_date    DateTime
+  current_mileage      Int
+  next_service_mileage Int
+  notes                String?  @db.Text
+  created_at           DateTime @default(now())
+
+  vehicle              Vehicle  @relation(fields: [vehicle_id], references: [id], onDelete: Cascade)
+
+  @@index([vehicle_id])
+  @@map("vehicle_maintenances")
+}
+
+model VehicleMedia {
+  id         String   @id @default(uuid())
+  vehicle_id String
+  file_url   String   @db.VarChar(2048)
+  is_cover   Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  vehicle    Vehicle  @relation(fields: [vehicle_id], references: [id], onDelete: Cascade)
+
+  @@index([vehicle_id])
+  @@map("vehicle_media")
+}
+
+model Customer {
+  id         String     @id @default(uuid())
+  full_name  String     @db.VarChar(255)
+  email      String     @unique @db.VarChar(255)
+  phone      String     @db.VarChar(30)
+  address    String     @db.VarChar(512)
+  notes      String?    @db.Text
+  driving_license_front String? @db.LongText
+  driving_license_back  String? @db.LongText
+  created_at DateTime   @default(now())
+  updated_at DateTime   @updatedAt
+  bookings   Booking[]
+  contracts  Contract[]
+  payments   Payment[]
+  deliveries Delivery[]
+  returns    VehicleReturn[]
+
+  @@map("customers")
+}
+
+model Booking {
+  id                 String         @id @default(uuid())
+  booking_number     String         @unique @db.VarChar(50)
+  customer_id        String
+  vehicle_id         String
+  assigned_driver_id String?
+  pickup_date        DateTime
+  return_date        DateTime
+  pickup_location    String         @db.VarChar(255)
+  delivery_address   String?        @db.VarChar(512)
+  rental_days        Int
+  subtotal           Decimal        @db.Decimal(10, 2)
+  tax                Decimal        @db.Decimal(10, 2)
+  fees               Decimal        @db.Decimal(10, 2)
+  total_amount       Decimal        @db.Decimal(10, 2)
+  payment_method     PaymentMethod
+  contract_signed    Boolean        @default(false)
+  payment_completed  Boolean        @default(false)
+  status             BookingStatus  @default(Draft)
+  is_deleted         Boolean        @default(false)
+  created_at         DateTime       @default(now())
+  updated_at         DateTime       @updatedAt
+
+  customer        Customer               @relation(fields: [customer_id], references: [id])
+  vehicle         Vehicle                @relation(fields: [vehicle_id], references: [id])
+  assigned_driver DriverProfile?         @relation(fields: [assigned_driver_id], references: [id], onDelete: SetNull)
+  notes           BookingNote[]
+  status_history  BookingStatusHistory[]
+  contracts       Contract[]
+  payments        Payment[]
+  deliveries      Delivery[]
+  returns         VehicleReturn[]
+
+  @@index([customer_id])
+  @@index([vehicle_id])
+  @@index([assigned_driver_id])
+  @@index([status])
+  @@index([booking_number])
+  @@map("bookings")
+}
+
+model BookingStatusHistory {
+  id         String        @id @default(uuid())
+  booking_id String
+  old_status BookingStatus
+  new_status BookingStatus
+  changed_by String
+  notes      String?       @db.Text
+  created_at DateTime      @default(now())
+
+  booking    Booking       @relation(fields: [booking_id], references: [id], onDelete: Cascade)
+  user       User          @relation(fields: [changed_by], references: [id])
+
+  @@index([booking_id])
+  @@index([changed_by])
+  @@map("booking_status_histories")
+}
+
+model BookingNote {
+  id         String   @id @default(uuid())
+  booking_id String
+  note       String   @db.Text
+  created_by String
+  created_at DateTime @default(now())
+
+  booking    Booking  @relation(fields: [booking_id], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [created_by], references: [id])
+
+  @@index([booking_id])
+  @@index([created_by])
+  @@map("booking_notes")
+}
+
+model Contract {
+  id               String          @id @default(uuid())
+  contract_number  String          @unique @db.VarChar(50)
+  booking_id       String
+  customer_id      String
+  vehicle_id       String
+  contract_version String          @default("v1.0") @db.VarChar(20)
+  contract_content String          @db.Text
+  signature_type   SignatureType?
+  typed_signature  String?         @db.VarChar(255)
+  signature_image  String?         @db.LongText
+  signed           Boolean         @default(false)
+  signed_at        DateTime?
+  viewed_at        DateTime?
+  pdf_url          String?         @db.VarChar(2048)
+  ip_address       String?         @db.VarChar(45)
+  status           ContractStatus  @default(Draft)
+  created_at       DateTime        @default(now())
+  updated_at       DateTime        @updatedAt
+
+  booking          Booking         @relation(fields: [booking_id], references: [id])
+  customer         Customer        @relation(fields: [customer_id], references: [id])
+  vehicle          Vehicle         @relation(fields: [vehicle_id], references: [id])
+  histories        ContractHistory[]
+
+  @@index([booking_id])
+  @@index([customer_id])
+  @@index([vehicle_id])
+  @@index([status])
+  @@index([contract_number])
+  @@map("contracts")
+}
+
+model ContractHistory {
+  id          String         @id @default(uuid())
+  contract_id String
+  old_status  ContractStatus
+  new_status  ContractStatus
+  changed_by  String
+  notes       String?        @db.Text
+  created_at  DateTime       @default(now())
+
+  contract    Contract       @relation(fields: [contract_id], references: [id], onDelete: Cascade)
+  user        User           @relation(fields: [changed_by], references: [id])
+
+  @@index([contract_id])
+  @@index([changed_by])
+  @@map("contract_status_histories")
+}
+
+enum PaymentStatus {
+  Pending
+  Authorized
+  Paid
+  Partially_Paid
+  Refunded
+  Failed
+  Cancelled
+}
+
+model Payment {
+  id                    String               @id @default(uuid())
+  payment_number        String               @unique @db.VarChar(50)
+  booking_id            String
+  customer_id           String
+  payment_method        PaymentMethod
+  amount                Decimal              @db.Decimal(10, 2)
+  paid_amount           Decimal              @db.Decimal(10, 2) @default(0.00)
+  remaining_amount      Decimal              @db.Decimal(10, 2)
+  status                PaymentStatus        @default(Pending)
+  transaction_reference String?              @db.VarChar(255)
+  payment_date          DateTime?
+  notes                 String?              @db.Text
+  created_at            DateTime             @default(now())
+  updated_at            DateTime             @updatedAt
+
+  booking               Booking              @relation(fields: [booking_id], references: [id])
+  customer              Customer             @relation(fields: [customer_id], references: [id])
+  histories             PaymentHistory[]
+  transactions          PaymentTransaction[]
+
+  @@index([booking_id])
+  @@index([customer_id])
+  @@index([status])
+  @@index([payment_number])
+  @@map("payments")
+}
+
+model PaymentHistory {
+  id          String        @id @default(uuid())
+  payment_id  String
+  old_status  PaymentStatus
+  new_status  PaymentStatus
+  changed_by  String
+  notes       String?       @db.Text
+  created_at  DateTime      @default(now())
+
+  payment     Payment       @relation(fields: [payment_id], references: [id], onDelete: Cascade)
+  user        User          @relation("PaymentStatusChanges", fields: [changed_by], references: [id])
+
+  @@index([payment_id])
+  @@index([changed_by])
+  @@map("payment_histories")
+}
+
+model PaymentTransaction {
+  id                    String        @id @default(uuid())
+  payment_id            String
+  amount                Decimal       @db.Decimal(10, 2)
+  payment_method        PaymentMethod
+  transaction_reference String?       @db.VarChar(255)
+  proof_image_url       String?       @db.VarChar(2048)
+  received_by           String
+  notes                 String?       @db.Text
+  created_at            DateTime      @default(now())
+
+  payment               Payment       @relation(fields: [payment_id], references: [id], onDelete: Cascade)
+  user                  User          @relation("ReceivedTransactions", fields: [received_by], references: [id])
+
+  @@index([payment_id])
+  @@index([received_by])
+  @@map("payment_transactions")
+}
+
+enum DeliveryStatus {
+  Pending
+  Assigned
+  Driver_Acknowledged
+  En_Route
+  Arrived
+  Vehicle_Handover
+  Delivered
+  Failed
+  Cancelled
+}
+
+enum PhotoType {
+  FRONT
+  REAR
+  LEFT
+  RIGHT
+  INTERIOR
+  ODOMETER
+  FUEL_GAUGE
+  DAMAGE
+}
+
+model Delivery {
+  id                   String        @id @default(uuid())
+  delivery_number      String        @unique @db.VarChar(50)
+  booking_id           String
+  vehicle_id           String
+  driver_id            String
+  customer_id          String
+  scheduled_date       DateTime
+  actual_delivery_time DateTime?
+  pickup_address       String        @db.VarChar(512)
+  delivery_address     String        @db.VarChar(512)
+  status               DeliveryStatus @default(Pending)
+  notes                String?       @db.Text
+  created_at           DateTime      @default(now())
+  updated_at           DateTime      @updatedAt
+
+  // Signature capture fields
+  customer_signature   String?       @db.Text
+  driver_signature     String?       @db.Text
+  handover_time        DateTime?
+
+  // Relations
+  booking              Booking       @relation(fields: [booking_id], references: [id])
+  vehicle              Vehicle       @relation(fields: [vehicle_id], references: [id])
+  driver               DriverProfile @relation(fields: [driver_id], references: [id])
+  customer             Customer      @relation(fields: [customer_id], references: [id])
+
+  status_histories     DeliveryStatusHistory[]
+  inspections          DeliveryInspection[]
+  photos               DeliveryPhoto[]
+  checklist_items      DeliveryChecklist[]
+
+  @@index([booking_id])
+  @@index([vehicle_id])
+  @@index([driver_id])
+  @@index([customer_id])
+  @@index([status])
+  @@index([delivery_number])
+  @@map("deliveries")
+}
+
+model DeliveryStatusHistory {
+  id          String         @id @default(uuid())
+  delivery_id String
+  old_status  DeliveryStatus
+  new_status  DeliveryStatus
+  changed_by  String
+  notes       String?        @db.Text
+  created_at  DateTime       @default(now())
+
+  delivery    Delivery       @relation(fields: [delivery_id], references: [id], onDelete: Cascade)
+  user        User           @relation(fields: [changed_by], references: [id])
+
+  @@index([delivery_id])
+  @@index([changed_by])
+  @@map("delivery_status_histories")
+}
+
+model DeliveryInspection {
+  id                String   @id @default(uuid())
+  delivery_id       String
+  fuel_level        Decimal  @db.Decimal(5, 2)
+  mileage           Int
+  vehicle_condition String   @db.Text
+  damage_notes      String?  @db.Text
+  odometer_out      Int
+  fuel_level_out    Decimal  @db.Decimal(5, 2)
+  created_at        DateTime @default(now())
+
+  delivery          Delivery @relation(fields: [delivery_id], references: [id], onDelete: Cascade)
+
+  @@index([delivery_id])
+  @@map("delivery_inspections")
+}
+
+model DeliveryPhoto {
+  id          String    @id @default(uuid())
+  delivery_id String
+  photo_type  PhotoType
+  file_url    String    @db.VarChar(2048)
+  created_at  DateTime  @default(now())
+
+  delivery    Delivery  @relation(fields: [delivery_id], references: [id], onDelete: Cascade)
+
+  @@index([delivery_id])
+  @@map("delivery_photos")
+}
+
+model DeliveryChecklist {
+  id           String    @id @default(uuid())
+  delivery_id  String
+  item_name    String    @db.VarChar(255)
+  completed    Boolean   @default(false)
+  completed_at DateTime?
+  completed_by String?
+
+  delivery     Delivery  @relation(fields: [delivery_id], references: [id], onDelete: Cascade)
+  user         User?     @relation(fields: [completed_by], references: [id])
+
+  @@index([delivery_id])
+  @@index([completed_by])
+  @@map("delivery_checklists")
+}
+
+enum ReturnStatus {
+  Scheduled
+  In_Progress
+  Inspection_Completed
+  Charges_Pending
+  Completed
+}
+
+enum ReturnPhotoType {
+  FRONT
+  REAR
+  LEFT
+  RIGHT
+  INTERIOR
+  ODOMETER
+  DAMAGE
+}
+
+enum DamageChargeStatus {
+  Pending
+  Approved
+  Waived
+}
+
+model VehicleReturn {
+  id                    String                @id @default(uuid())
+  return_number         String                @unique @db.VarChar(50)
+  booking_id            String
+  vehicle_id            String
+  driver_id             String
+  customer_id           String
+  scheduled_return_date DateTime
+  actual_return_date     DateTime?
+  status                ReturnStatus          @default(Scheduled)
+  notes                 String?               @db.Text
+  customer_signature    String?               @db.Text
+  driver_signature      String?               @db.Text
+  created_at            DateTime              @default(now())
+  updated_at            DateTime              @updatedAt
+
+  booking               Booking               @relation(fields: [booking_id], references: [id])
+  vehicle               Vehicle               @relation(fields: [vehicle_id], references: [id])
+  driver                DriverProfile         @relation(fields: [driver_id], references: [id])
+  customer              Customer              @relation(fields: [customer_id], references: [id])
+
+  inspections           ReturnInspection[]
+  photos                ReturnPhoto[]
+  charges               ReturnCharge[]
+  status_histories      ReturnStatusHistory[]
+
+  @@index([booking_id])
+  @@index([vehicle_id])
+  @@index([driver_id])
+  @@index([customer_id])
+  @@index([status])
+  @@index([return_number])
+  @@map("vehicle_returns")
+}
+
+model ReturnInspection {
+  id                String        @id @default(uuid())
+  return_id         String
+  odometer_in       Int
+  fuel_level_in     Decimal       @db.Decimal(5, 2)
+  vehicle_condition String        @db.Text
+  damage_notes      String?       @db.Text
+  created_at        DateTime      @default(now())
+
+  return            VehicleReturn @relation(fields: [return_id], references: [id], onDelete: Cascade)
+
+  @@index([return_id])
+  @@map("return_inspections")
+}
+
+model ReturnPhoto {
+  id          String          @id @default(uuid())
+  return_id   String
+  photo_type  ReturnPhotoType
+  file_url    String          @db.VarChar(2048)
+  created_at  DateTime        @default(now())
+
+  return      VehicleReturn   @relation(fields: [return_id], references: [id], onDelete: Cascade)
+
+  @@index([return_id])
+  @@map("return_photos")
+}
+
+model ReturnCharge {
+  id                   String              @id @default(uuid())
+  return_id            String
+  charge_type          String              @db.VarChar(100)
+  amount               Decimal             @db.Decimal(10, 2)
+  notes                String?             @db.Text
+  damage_charge_status DamageChargeStatus?
+  approved_by          String?
+  approved_at          DateTime?
+  created_at           DateTime            @default(now())
+
+  return               VehicleReturn       @relation(fields: [return_id], references: [id], onDelete: Cascade)
+  approver             User?               @relation(fields: [approved_by], references: [id])
+
+  @@index([return_id])
+  @@index([approved_by])
+  @@map("return_charges")
+}
+
+model ReturnStatusHistory {
+  id          String        @id @default(uuid())
+  return_id   String
+  old_status  ReturnStatus
+  new_status  ReturnStatus
+  changed_by  String
+  notes       String?       @db.Text
+  created_at  DateTime      @default(now())
+
+  return      VehicleReturn @relation(fields: [return_id], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [changed_by], references: [id])
+
+  @@index([return_id])
+  @@index([changed_by])
+  @@map("return_status_histories")
+}
+
+enum NotificationType {
+  BOOKING
+  CONTRACT
+  PAYMENT
+  DELIVERY
+  RETURN
+  VEHICLE
+  DRIVER
+  SYSTEM
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  ARCHIVED
+}
+
+model Notification {
+  id         String               @id @default(uuid())
+  title      String               @db.VarChar(255)
+  message    String               @db.Text
+  type       NotificationType
+  priority   NotificationPriority
+  created_by String?
+  created_at DateTime             @default(now())
+
+  creator    User?                @relation(fields: [created_by], references: [id])
+  recipients NotificationRecipient[]
+
+  @@index([created_by])
+  @@map("notifications")
+}
+
+model NotificationRecipient {
+  id              String             @id @default(uuid())
+  notification_id String
+  user_id         String
+  status          NotificationStatus @default(UNREAD)
+  read_at         DateTime?
+  created_at      DateTime           @default(now())
+
+  notification    Notification       @relation(fields: [notification_id], references: [id], onDelete: Cascade)
+  user            User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([notification_id])
+  @@index([user_id])
+  @@map("notification_recipients")
+}
+
+model NotificationPreference {
+  id                    String   @id @default(uuid())
+  user_id               String   @unique
+  booking_notifications Boolean  @default(true)
+  payment_notifications Boolean  @default(true)
+  delivery_notifications Boolean @default(true)
+  return_notifications  Boolean  @default(true)
+  system_notifications  Boolean  @default(true)
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  user                  User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+model SystemSetting {
+  id            String   @id @default(uuid())
+  setting_key   String   @unique @db.VarChar(100)
+  setting_value String   @db.Text
+  description   String?  @db.Text
+  updated_by    String?
+  updated_at    DateTime @updatedAt
+
+  updater       User?    @relation(fields: [updated_by], references: [id])
+
+  @@index([updated_by])
+  @@map("system_settings")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  user_id    String?
+  action     String   @db.VarChar(255)
+  module     String   @db.VarChar(100)
+  record_id  String?  @db.VarChar(255)
+  old_value  String?  @db.Text
+  new_value  String?  @db.Text
+  created_at DateTime @default(now())
+
+  user       User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id])
+  @@map("audit_logs")
+}
+
+// ============================================================
+// CAR SALES MODULE
+// ============================================================
+
+enum SaleInquiryStatus {
+  New
+  Contacted
+  Test_Drive_Scheduled
+  Negotiating
+  Won
+  Lost
+}
+
+enum ReservationFeeStatus {
+  Unpaid
+  Paid
+  Refunded
+}
+
+model VehicleSaleInquiry {
+  id                     String               @id @default(uuid())
+  inquiry_number         String               @unique @db.VarChar(50)
+  vehicle_id             String
+  full_name              String               @db.VarChar(255)
+  email                  String               @db.VarChar(255)
+  phone                  String               @db.VarChar(30)
+  message                String?              @db.Text
+  status                 SaleInquiryStatus    @default(New)
+  reservation_fee_status ReservationFeeStatus @default(Unpaid)
+  reservation_fee_amount Decimal              @db.Decimal(10, 2) @default(500.00)
+  transaction_reference  String?              @db.VarChar(255)
+  admin_notes            String?              @db.Text
+  is_deleted             Boolean              @default(false)
+  created_at             DateTime             @default(now())
+  updated_at             DateTime             @updatedAt
+
+  vehicle                Vehicle              @relation(fields: [vehicle_id], references: [id])
+
+  @@index([vehicle_id])
+  @@index([status])
+  @@index([email])
+  @@index([inquiry_number])
+  @@map("vehicle_sale_inquiries")
+}
