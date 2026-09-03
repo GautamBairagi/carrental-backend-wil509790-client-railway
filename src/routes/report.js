@@ -9,7 +9,9 @@ router.use(authorize('ADMIN', 'OPERATIONS_MANAGER'));
 
 router.get('/bookings', reportController.getBookings);
 router.get('/revenue', reportController.getRevenue);
+router.get('/financial', reportController.getFinancial);
 router.get('/vehicles', reportController.getVehicles);
+router.get('/vehicle-performance', reportController.getVehiclePerformance);
 router.get('/drivers', reportController.getDrivers);
 router.get('/deliveries', reportController.getDeliveries);
 router.get('/returns', reportController.getReturns);

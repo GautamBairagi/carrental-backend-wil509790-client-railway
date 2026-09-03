@@ -12,34 +12,34 @@ if (!fs.existsSync(uploadDir)) {
 // Disk Storage configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/');
+    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${file.fieldname}-${uniqueSuffix}${path.extname(file.originalname)}`);
+    const ext = path.extname(file.originalname) || '.png';
+    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
   },
 });
 
-// File filter validation (Images and PDFs)
+// File filter validation (All common image formats and PDFs)
 const fileFilter = (req, file, cb) => {
-  const allowedExtensions = /jpeg|jpg|png|pdf/;
-  const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
+  const allowedExtensions = /\.(jpeg|jpg|png|webp|gif|svg|avif|heic|heif|bmp|tiff|jfif|pdf)$/i;
+  const isImageMime = file.mimetype ? (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf' || file.mimetype === 'application/octet-stream') : false;
+  const isAllowedExt = allowedExtensions.test(file.originalname);
 
-  const extname = allowedExtensions.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedMimeTypes.includes(file.mimetype);
-
-  if (extname && mimetype) {
+  if (isImageMime || isAllowedExt) {
     return cb(null, true);
   }
-  cb(new BadRequestError('Only images (jpeg, jpg, png) and PDFs are allowed.'));
+  cb(new BadRequestError('Only image files (JPG, PNG, WEBP, GIF, SVG, HEIC, etc.) and PDFs are allowed.'));
 };
 
 const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 20 * 1024 * 1024, // 20MB limit
   },
 });
 
 module.exports = upload;
+

@@ -24,6 +24,8 @@ enum PaymentMethod {
   ZELLE
   CASH_APP
   PAY_AT_DELIVERY
+  CASH
+  BANK_TRANSFER
 }
 
 enum BookingStatus {
@@ -103,6 +105,7 @@ model User {
   notification_preference NotificationPreference?
   updated_settings SystemSetting[]
   audit_logs AuditLog[]
+  expenses_created Expense[] @relation("ExpenseCreator")
 
   @@index([employee_id])
   @@index([email])
@@ -242,6 +245,9 @@ model Vehicle {
   security_deposit   Decimal              @db.Decimal(10, 2) @default(2500.00)
   minimum_rental_days Int                 @default(2)
 
+  // Financial Acquisition
+  purchase_price     Decimal?             @db.Decimal(10, 2)
+
   // Sale Listing
   is_for_sale        Boolean              @default(false)
   sale_price         Decimal?             @db.Decimal(10, 2)
@@ -262,6 +268,8 @@ model Vehicle {
   deliveries         Delivery[]
   returns            VehicleReturn[]
   sale_inquiries     VehicleSaleInquiry[]
+  expenses           Expense[]
+  payments           Payment[]
 
   @@index([status])
   @@index([category])
@@ -294,10 +302,12 @@ model VehicleMaintenance {
   next_service_date    DateTime
   current_mileage      Int
   next_service_mileage Int
+  cost                 Decimal? @default(0.00) @db.Decimal(10, 2)
   notes                String?  @db.Text
   created_at           DateTime @default(now())
 
-  vehicle              Vehicle  @relation(fields: [vehicle_id], references: [id], onDelete: Cascade)
+  vehicle              Vehicle   @relation(fields: [vehicle_id], references: [id], onDelete: Cascade)
+  expenses             Expense[]
 
   @@index([vehicle_id])
   @@map("vehicle_maintenances")
@@ -332,6 +342,7 @@ model Customer {
   payments   Payment[]
   deliveries Delivery[]
   returns    VehicleReturn[]
+  recurring_schedules RecurringPaymentSchedule[]
 
   @@map("customers")
 }
@@ -368,6 +379,7 @@ model Booking {
   payments        Payment[]
   deliveries      Delivery[]
   returns         VehicleReturn[]
+  recurring_schedules RecurringPaymentSchedule[]
 
   @@index([customer_id])
   @@index([vehicle_id])
@@ -472,8 +484,9 @@ enum PaymentStatus {
 model Payment {
   id                    String               @id @default(uuid())
   payment_number        String               @unique @db.VarChar(50)
-  booking_id            String
+  booking_id            String?
   customer_id           String
+  vehicle_id            String?
   payment_method        PaymentMethod
   amount                Decimal              @db.Decimal(10, 2)
   paid_amount           Decimal              @db.Decimal(10, 2) @default(0.00)
@@ -485,13 +498,15 @@ model Payment {
   created_at            DateTime             @default(now())
   updated_at            DateTime             @updatedAt
 
-  booking               Booking              @relation(fields: [booking_id], references: [id])
+  booking               Booking?             @relation(fields: [booking_id], references: [id], onDelete: SetNull)
   customer              Customer             @relation(fields: [customer_id], references: [id])
+  vehicle               Vehicle?             @relation(fields: [vehicle_id], references: [id], onDelete: SetNull)
   histories             PaymentHistory[]
   transactions          PaymentTransaction[]
 
   @@index([booking_id])
   @@index([customer_id])
+  @@index([vehicle_id])
   @@index([status])
   @@index([payment_number])
   @@map("payments")
@@ -929,3 +944,84 @@ model VehicleSaleInquiry {
   @@index([inquiry_number])
   @@map("vehicle_sale_inquiries")
 }
+
+// ============================================================
+// BACK-OFFICE EXTENSIONS: EXPENSES & RECURRING PAYMENTS
+// ============================================================
+
+enum ExpenseCategory {
+  MAINTENANCE
+  FUEL
+  INSURANCE
+  CLEANING
+  REPAIR
+  OPERATIONAL
+  OTHER
+}
+
+enum RecurrenceInterval {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum ScheduleStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model Expense {
+  id             String          @id @default(uuid())
+  expense_number String          @unique @db.VarChar(50)
+  vehicle_id     String?
+  maintenance_id String?
+  category       ExpenseCategory
+  title          String          @db.VarChar(255)
+  amount         Decimal         @db.Decimal(10, 2)
+  expense_date   DateTime
+  vendor         String?         @db.VarChar(255)
+  receipt_url    String?         @db.VarChar(2048)
+  notes          String?         @db.Text
+  created_by     String
+  created_at     DateTime        @default(now())
+  updated_at     DateTime        @updatedAt
+
+  vehicle     Vehicle?            @relation(fields: [vehicle_id], references: [id], onDelete: SetNull)
+  maintenance VehicleMaintenance? @relation(fields: [maintenance_id], references: [id], onDelete: SetNull)
+  creator     User                @relation("ExpenseCreator", fields: [created_by], references: [id])
+
+  @@index([vehicle_id])
+  @@index([maintenance_id])
+  @@index([category])
+  @@index([expense_date])
+  @@index([created_by])
+  @@map("expenses")
+}
+
+model RecurringPaymentSchedule {
+  id               String             @id @default(uuid())
+  booking_id       String
+  customer_id      String
+  amount_per_cycle Decimal            @db.Decimal(10, 2)
+  interval         RecurrenceInterval
+  next_due_date    DateTime
+  start_date       DateTime
+  end_date         DateTime?
+  status           ScheduleStatus     @default(ACTIVE)
+  payment_method   PaymentMethod
+  auto_charge      Boolean            @default(false)
+  created_at       DateTime           @default(now())
+  updated_at       DateTime           @updatedAt
+
+  booking  Booking  @relation(fields: [booking_id], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+
+  @@index([booking_id])
+  @@index([customer_id])
+  @@index([next_due_date])
+  @@index([status])
+  @@map("recurring_payment_schedules")
+}
+

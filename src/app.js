@@ -15,7 +15,6 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'http://localhost:3001',
-  'https://novadriverentals.com',
   'https://novadrive-carrentals.netlify.app',
   process.env.FRONTEND_URL
 ].filter(Boolean);
@@ -62,6 +61,8 @@ const customerRouter = require('./routes/customer');
 const uploadRouter = require('./routes/upload');
 const imagekitRouter = require('./routes/imagekit');
 const salesRouter = require('./routes/sales');
+const expenseRouter = require('./routes/expense');
+const recurringPaymentRouter = require('./routes/recurringPayment');
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -93,6 +94,8 @@ app.use('/customers', customerRouter);
 app.use('/upload', uploadRouter);
 app.use('/imagekit', imagekitRouter);
 app.use('/sales', salesRouter);
+app.use('/expenses', expenseRouter);
+app.use('/recurring-payments', recurringPaymentRouter);
 
 // Health Check Endpoint
 app.get('/health', (req, res) => {

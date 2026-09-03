@@ -64,6 +64,10 @@ const validateCreateVehicle = (req, res, next) => {
     return next(new BadRequestError('Security deposit must be a non-negative number.'));
   }
 
+  if (req.body.purchasePrice !== undefined && (isNaN(parseFloat(req.body.purchasePrice)) || parseFloat(req.body.purchasePrice) < 0)) {
+    return next(new BadRequestError('Purchase price must be a non-negative number.'));
+  }
+
   if (minimumRentalDays !== undefined && (typeof minimumRentalDays !== 'number' || minimumRentalDays <= 0)) {
     return next(new BadRequestError('Minimum rental days must be a positive number.'));
   }

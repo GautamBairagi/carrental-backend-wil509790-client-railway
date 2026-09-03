@@ -22,37 +22,71 @@ const assertDriverPaymentAccess = async (payment, currentUserId, currentUserRole
 };
 
 const createPayment = async (paymentBody, currentUserId) => {
-  const { bookingId, amount, paymentMethod, notes } = paymentBody;
+  const { bookingId, customerId: reqCustomerId, vehicleId: reqVehicleId, amount, paymentMethod, transactionReference, notes } = paymentBody;
 
-  // Retrieve booking context
-  const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
-  if (!booking || booking.is_deleted) {
-    throw new NotFoundError('Parent booking not found.');
-  }
+  let targetCustomerId = reqCustomerId;
+  let targetVehicleId = reqVehicleId;
+  let booking = null;
 
-  // Strict booking validation before payment
-  if (!booking.contract_signed && booking.status !== 'Contract_Signed') {
-    const signedContract = await prisma.contract.findFirst({
-      where: { booking_id: bookingId, signed: true }
-    });
+  if (bookingId) {
+    // Retrieve booking context
+    booking = await prisma.booking.findUnique({ where: { id: bookingId } });
+    if (!booking || booking.is_deleted) {
+      throw new NotFoundError('Parent booking not found.');
+    }
 
-    if (!signedContract) {
-      const blockedStatuses = [
-        'Draft',
-        'Pending_Review',
-        'License_Verification_Pending',
-        'License_Verified',
-        'Contract_Sent',
-      ];
-      if (blockedStatuses.includes(booking.status)) {
-        throw new BadRequestError('Booking contract must be signed before payment can be processed.');
-      }
-    } else {
-      // Auto-sync existing booking to prevent further inconsistencies
-      await prisma.booking.update({
-        where: { id: bookingId },
-        data: { contract_signed: true, status: 'Contract_Signed' }
+    targetCustomerId = booking.customer_id;
+    targetVehicleId = booking.vehicle_id;
+
+    if (reqCustomerId && reqCustomerId !== booking.customer_id) {
+      throw new BadRequestError('Provided customer ID does not match parent booking customer.');
+    }
+    if (reqVehicleId && reqVehicleId !== booking.vehicle_id) {
+      throw new BadRequestError('Provided vehicle ID does not match parent booking vehicle.');
+    }
+
+    // Strict booking validation before payment
+    if (!booking.contract_signed && booking.status !== 'Contract_Signed') {
+      const signedContract = await prisma.contract.findFirst({
+        where: { booking_id: bookingId, signed: true }
       });
+
+      if (!signedContract) {
+        const blockedStatuses = [
+          'Draft',
+          'Pending_Review',
+          'License_Verification_Pending',
+          'License_Verified',
+          'Contract_Sent',
+        ];
+        if (blockedStatuses.includes(booking.status)) {
+          throw new BadRequestError('Booking contract must be signed before payment can be processed.');
+        }
+      } else {
+        // Auto-sync existing booking to prevent further inconsistencies
+        await prisma.booking.update({
+          where: { id: bookingId },
+          data: { contract_signed: true, status: 'Contract_Signed' }
+        });
+      }
+    }
+  } else {
+    // Standalone Payment Validation
+    if (!targetCustomerId) {
+      throw new BadRequestError('Customer ID is required for standalone payments.');
+    }
+    if (!targetVehicleId) {
+      throw new BadRequestError('Vehicle ID is required for standalone payments.');
+    }
+
+    const customer = await prisma.customer.findUnique({ where: { id: targetCustomerId } });
+    if (!customer) {
+      throw new NotFoundError('Customer not found.');
+    }
+
+    const vehicle = await prisma.vehicle.findUnique({ where: { id: targetVehicleId } });
+    if (!vehicle || vehicle.is_deleted) {
+      throw new NotFoundError('Vehicle not found.');
     }
   }
 
@@ -62,13 +96,15 @@ const createPayment = async (paymentBody, currentUserId) => {
     const newPayment = await tx.payment.create({
       data: {
         payment_number: paymentNumber,
-        booking_id: bookingId,
-        customer_id: booking.customer_id,
+        booking_id: bookingId || null,
+        customer_id: targetCustomerId,
+        vehicle_id: targetVehicleId || null,
         payment_method: paymentMethod,
         amount: amount,
         paid_amount: 0.00,
         remaining_amount: amount,
         status: 'Pending',
+        transaction_reference: transactionReference || null,
         notes: notes || null,
       },
     });
@@ -79,16 +115,25 @@ const createPayment = async (paymentBody, currentUserId) => {
         old_status: 'Pending',
         new_status: 'Pending',
         changed_by: currentUserId,
-        notes: 'Payment record initialized.',
+        notes: bookingId ? 'Payment record initialized via booking.' : 'Standalone counter payment record initialized.',
       },
     });
+
+    await auditService.logAction(
+      currentUserId,
+      'Payment Record Initialized',
+      'PAYMENT',
+      newPayment.id,
+      null,
+      { id: newPayment.id, payment_number: newPayment.payment_number, amount: newPayment.amount }
+    );
 
     return newPayment;
   });
 
   await notificationService.createNotification({
-    title: 'Payment Pending',
-    message: `Payment request of $${amount} initialized for booking ${booking.booking_number}.`,
+    title: 'Payment Initialized',
+    message: `Payment request of $${amount} initialized${booking ? ` for booking ${booking.booking_number}` : ' at back-office counter'}.`,
     type: 'PAYMENT',
     priority: 'MEDIUM',
     creatorId: currentUserId,
@@ -244,6 +289,9 @@ const getPayments = async (queryFilters, currentUserId, currentUserRole) => {
       take,
       orderBy: { created_at: 'desc' },
       include: {
+        customer: { select: { id: true, full_name: true, email: true, phone: true } },
+        vehicle: { select: { id: true, make: true, model: true, plate_number: true } },
+        booking: { select: { id: true, booking_number: true, vehicle: { select: { make: true, model: true, plate_number: true } } } },
         transactions: true,
       },
     }),
@@ -265,6 +313,9 @@ const getPaymentById = async (id, currentUserId, currentUserRole) => {
   const payment = await prisma.payment.findUnique({
     where: { id },
     include: {
+      customer: { select: { id: true, full_name: true, email: true, phone: true } },
+      vehicle: { select: { id: true, make: true, model: true, plate_number: true } },
+      booking: { select: { id: true, booking_number: true, vehicle: { select: { make: true, model: true, plate_number: true } } } },
       histories: true,
       transactions: true,
     },

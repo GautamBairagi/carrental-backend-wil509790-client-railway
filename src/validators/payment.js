@@ -1,19 +1,29 @@
 const { BadRequestError } = require('../utils/errors');
 
 const validateCreatePayment = (req, res, next) => {
-  const { bookingId, amount, paymentMethod, notes } = req.body;
+  const { bookingId, customerId, vehicleId, amount, paymentMethod, notes } = req.body;
 
-  if (!bookingId || typeof bookingId !== 'string') {
-    return next(new BadRequestError('Booking ID is required.'));
+  if (bookingId) {
+    if (typeof bookingId !== 'string') {
+      return next(new BadRequestError('Booking ID must be a string.'));
+    }
+  } else {
+    // Standalone Payment validation
+    if (!customerId || typeof customerId !== 'string') {
+      return next(new BadRequestError('Customer ID is required for standalone payments without a booking.'));
+    }
+    if (!vehicleId || typeof vehicleId !== 'string') {
+      return next(new BadRequestError('Vehicle ID is required for standalone payments without a booking.'));
+    }
   }
 
   if (typeof amount !== 'number' || amount <= 0) {
     return next(new BadRequestError('Amount must be a positive number.'));
   }
 
-  const allowedPaymentMethods = ['CREDIT_DEBIT_CARD', 'ZELLE', 'CASH_APP', 'PAY_AT_DELIVERY'];
+  const allowedPaymentMethods = ['CREDIT_DEBIT_CARD', 'ZELLE', 'CASH_APP', 'PAY_AT_DELIVERY', 'CASH', 'BANK_TRANSFER'];
   if (!paymentMethod || !allowedPaymentMethods.includes(paymentMethod)) {
-    return next(new BadRequestError('A valid payment method (CREDIT_DEBIT_CARD, ZELLE, CASH_APP, PAY_AT_DELIVERY) is required.'));
+    return next(new BadRequestError('A valid payment method (CREDIT_DEBIT_CARD, ZELLE, CASH_APP, PAY_AT_DELIVERY, CASH, BANK_TRANSFER) is required.'));
   }
 
   if (notes && typeof notes !== 'string') {

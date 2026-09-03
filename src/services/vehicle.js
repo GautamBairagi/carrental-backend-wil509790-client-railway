@@ -23,7 +23,7 @@ const createVehicle = async (vehicleBody, currentUserId, currentUserRole) => {
   }
 
   const { 
-    plateNumber, vin, make, model, year, color, category, dailyRentalRate,
+    plateNumber, vin, make, model, year, color, category, dailyRentalRate, purchasePrice,
     transmission, seats, fuelType, topSpeed, range, horsepower, doorsCount,
     securityDeposit, minimumRentalDays, insuranceExpiry, registrationExpiry,
     lastServiceDate, nextServiceDate, media
@@ -55,6 +55,7 @@ const createVehicle = async (vehicleBody, currentUserId, currentUserRole) => {
       color,
       category,
       daily_rental_rate: dailyRentalRate,
+      purchase_price: purchasePrice !== undefined && purchasePrice !== null && purchasePrice !== '' ? parseFloat(purchasePrice) : null,
       created_by: currentUserId,
       transmission: transmission || undefined,
       seats: seats !== undefined ? parseInt(seats, 10) : undefined,
@@ -195,7 +196,7 @@ const updateVehicle = async (id, vehicleBody, currentUserId, currentUserRole) =>
   }
 
   const { 
-    plateNumber, vin, make, model, year, color, category, dailyRentalRate,
+    plateNumber, vin, make, model, year, color, category, dailyRentalRate, purchasePrice,
     transmission, seats, fuelType, topSpeed, range, horsepower, doorsCount,
     securityDeposit, minimumRentalDays, insuranceExpiry, registrationExpiry,
     lastServiceDate, nextServiceDate, media
@@ -243,6 +244,7 @@ const updateVehicle = async (id, vehicleBody, currentUserId, currentUserRole) =>
       color,
       category,
       daily_rental_rate: dailyRentalRate,
+      purchase_price: purchasePrice !== undefined ? (purchasePrice !== null && purchasePrice !== '' ? parseFloat(purchasePrice) : null) : undefined,
       updated_by: currentUserId,
       transmission: transmission || undefined,
       seats: seats !== undefined ? parseInt(seats, 10) : undefined,

@@ -309,10 +309,30 @@ const getDashboard = async (req, res, next) => {
   }
 };
 
+const getFinancial = async (req, res, next) => {
+  try {
+    const data = await reportService.getFinancialReport(req.query, req.user.role);
+    return success(res, 'Financial report generated successfully.', data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getVehiclePerformance = async (req, res, next) => {
+  try {
+    const data = await reportService.getVehiclePerformanceReport(req.query, req.user.role);
+    return success(res, 'Vehicle performance report generated successfully.', data);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getBookings,
   getRevenue,
+  getFinancial,
   getVehicles,
+  getVehiclePerformance,
   getDrivers,
   getDeliveries,
   getReturns,
@@ -320,3 +340,4 @@ module.exports = {
   getDriverExpiry,
   getDashboard,
 };
+
