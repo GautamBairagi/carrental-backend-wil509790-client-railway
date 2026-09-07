@@ -47,21 +47,19 @@ const assertDriverBookingAccess = async (booking, currentUserId, currentUserRole
 };
 
 const createBooking = async (bookingBody, currentUserId) => {
-  const {
-    customerId,
-    vehicleId,
-    pickupDate,
-    returnDate,
-    pickupLocation,
-    deliveryAddress,
-    rentalDays,
-    subtotal,
-    tax,
-    fees,
-    totalAmount,
-    paymentMethod,
-    status = 'Pending_Review',
-  } = bookingBody;
+  const customerId = bookingBody.customerId || bookingBody.customer_id;
+  const vehicleId = bookingBody.vehicleId || bookingBody.vehicle_id;
+  const pickupDate = bookingBody.pickupDate || bookingBody.pickup_date;
+  const returnDate = bookingBody.returnDate || bookingBody.return_date;
+  const pickupLocation = bookingBody.pickupLocation || bookingBody.pickup_location;
+  const deliveryAddress = bookingBody.deliveryAddress || bookingBody.delivery_address;
+  const rentalDays = bookingBody.rentalDays !== undefined ? bookingBody.rentalDays : bookingBody.rental_days;
+  const subtotal = bookingBody.subtotal;
+  const tax = bookingBody.tax;
+  const fees = bookingBody.fees;
+  const totalAmount = bookingBody.totalAmount !== undefined ? bookingBody.totalAmount : bookingBody.total_amount;
+  const paymentMethod = bookingBody.paymentMethod || bookingBody.payment_method;
+  const status = bookingBody.status || 'Pending_Review';
 
   // 1. Verify Customer exists
   const customer = await prisma.customer.findUnique({ where: { id: customerId } });
