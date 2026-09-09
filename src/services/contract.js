@@ -106,7 +106,7 @@ const getContracts = async (queryFilters, currentUserId, currentUserRole) => {
     where.customer_id = customerId;
   }
 
-  const [contracts, total] = await prisma.$transaction([
+  const [contracts, total] = await Promise.all([
     prisma.contract.findMany({
       where,
       skip,

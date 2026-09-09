@@ -18,6 +18,8 @@ const getAdminDashboard = async (currentUserRole) => {
     returns,
     customers,
     saleInquiries,
+    expenses,
+    recurringSchedules,
   ] = await Promise.all([
     prisma.payment.findMany(),
     prisma.vehicle.findMany({ where: { is_deleted: false } }),
@@ -27,6 +29,8 @@ const getAdminDashboard = async (currentUserRole) => {
     prisma.vehicleReturn.findMany({ include: { inspections: true } }),
     prisma.customer.findMany(),
     prisma.vehicleSaleInquiry.findMany({ where: { is_deleted: false } }),
+    prisma.expense.findMany(),
+    prisma.recurringPaymentSchedule.findMany(),
   ]);
 
   // Financial aggregates
@@ -35,6 +39,10 @@ const getAdminDashboard = async (currentUserRole) => {
     .filter(p => new Date(p.created_at) >= startOfMonth)
     .reduce((sum, p) => sum + Number(p.paid_amount), 0);
   const outstandingBalance = payments.reduce((sum, p) => sum + Number(p.remaining_amount), 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  const netProfit = Number((totalRevenue - totalExpenses).toFixed(2));
+  const paymentsDue = recurringSchedules.filter(s => s.status === 'ACTIVE').length;
+  const overduePayments = recurringSchedules.filter(s => s.status === 'ACTIVE' && s.next_due_date && new Date(s.next_due_date) < now).length;
 
   // Vehicle stats
   const totalVehicles = vehicles.length;
@@ -120,7 +128,12 @@ const getAdminDashboard = async (currentUserRole) => {
     totalRevenue,
     monthlyRevenue,
     outstandingBalance,
+    totalExpenses,
+    netProfit,
+    paymentsDue,
+    overduePayments,
     totalVehicles,
+    activeVehicles: vehiclesInTrip,
     availableVehicles,
     vehiclesInTrip,
     vehiclesInMaintenance,

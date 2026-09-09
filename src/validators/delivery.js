@@ -48,7 +48,7 @@ const validateUpdateStatus = (req, res, next) => {
 };
 
 const validateAddInspection = (req, res, next) => {
-  const { fuelLevel, mileage, vehicleCondition, damageNotes, odometerOut, fuelLevelOut } = req.body;
+  let { fuelLevel, mileage, vehicleCondition, damageNotes, odometerOut, fuelLevelOut } = req.body;
 
   if (typeof fuelLevel !== 'number' || fuelLevel < 0 || fuelLevel > 100) {
     return next(new BadRequestError('Fuel level must be a number between 0 and 100.'));
@@ -64,6 +64,15 @@ const validateAddInspection = (req, res, next) => {
 
   if (damageNotes && typeof damageNotes !== 'string') {
     return next(new BadRequestError('Damage notes must be a string.'));
+  }
+
+  if (odometerOut === undefined && typeof mileage === 'number') {
+    req.body.odometerOut = mileage;
+    odometerOut = mileage;
+  }
+  if (fuelLevelOut === undefined && typeof fuelLevel === 'number') {
+    req.body.fuelLevelOut = fuelLevel;
+    fuelLevelOut = fuelLevel;
   }
 
   if (typeof odometerOut !== 'number' || odometerOut < 0) {

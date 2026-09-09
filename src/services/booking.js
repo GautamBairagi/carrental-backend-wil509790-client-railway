@@ -183,7 +183,7 @@ const getBookings = async (queryFilters, currentUserId, currentUserRole) => {
     ];
   }
 
-  const [bookings, total] = await prisma.$transaction([
+  const [bookings, total] = await Promise.all([
     prisma.booking.findMany({
       where,
       skip,
@@ -727,6 +727,37 @@ const createPublicBooking = async (bookingBody) => {
     // Attach Stripe data to returned object
     newBooking.clientSecret = paymentIntent.client_secret;
     newBooking.paymentIntentId = paymentIntent.id;
+  } else {
+    // For non-card bookings (Zelle, CashApp, Pay Later/Cash), create a pending Payment record for financial visibility
+    const year = new Date().getFullYear();
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const paymentNumber = `PAY-${year}-${randomSuffix}`;
+
+    const dbPayment = await prisma.payment.create({
+      data: {
+        payment_number: paymentNumber,
+        booking_id: newBooking.id,
+        customer_id: customer.id,
+        vehicle_id: vehicleId,
+        payment_method: paymentMethod,
+        amount: totalAmount,
+        paid_amount: 0.00,
+        remaining_amount: totalAmount,
+        status: 'Pending',
+        transaction_reference: null,
+        notes: `Awaiting payment collection via ${paymentMethod}.`,
+      },
+    });
+
+    await prisma.paymentHistory.create({
+      data: {
+        payment_id: dbPayment.id,
+        old_status: 'Pending',
+        new_status: 'Pending',
+        changed_by: adminUser.id,
+        notes: `Payment record initialized for offline ${paymentMethod}.`,
+      },
+    });
   }
 
   return newBooking;

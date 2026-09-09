@@ -19,7 +19,16 @@ const validateCreateReturn = (req, res, next) => {
 };
 
 const validateAddInspection = (req, res, next) => {
-  const { odometerIn, fuelLevelIn, vehicleCondition, damageNotes } = req.body;
+  let { odometerIn, fuelLevelIn, vehicleCondition, damageNotes, mileage, fuelLevel } = req.body;
+
+  if (odometerIn === undefined && typeof mileage === 'number') {
+    req.body.odometerIn = mileage;
+    odometerIn = mileage;
+  }
+  if (fuelLevelIn === undefined && typeof fuelLevel === 'number') {
+    req.body.fuelLevelIn = fuelLevel;
+    fuelLevelIn = fuelLevel;
+  }
 
   if (typeof odometerIn !== 'number' || odometerIn < 0) {
     return next(new BadRequestError('Odometer in must be a non-negative number.'));

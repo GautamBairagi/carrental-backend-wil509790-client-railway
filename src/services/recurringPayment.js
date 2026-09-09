@@ -57,15 +57,9 @@ const createSchedule = async (data, creatorId) => {
     auto_charge = false,
   } = data;
 
-  // 1. Verify customer exists
-  const customer = await prisma.customer.findUnique({
-    where: { id: customer_id },
-  });
-  if (!customer) {
-    throw new NotFoundError(`Customer with ID ${customer_id} not found.`);
-  }
+  let resolvedCustomerId = customer_id;
 
-  // 2. Verify booking exists
+  // 1. Verify booking exists
   const booking = await prisma.booking.findUnique({
     where: { id: booking_id },
   });
@@ -73,10 +67,22 @@ const createSchedule = async (data, creatorId) => {
     throw new NotFoundError(`Booking with ID ${booking_id} not found.`);
   }
 
+  if (!resolvedCustomerId && booking.customer_id) {
+    resolvedCustomerId = booking.customer_id;
+  }
+
+  // 2. Verify customer exists
+  const customer = await prisma.customer.findUnique({
+    where: { id: resolvedCustomerId },
+  });
+  if (!customer) {
+    throw new NotFoundError(`Customer with ID ${resolvedCustomerId} not found.`);
+  }
+
   // 3. Customer-Booking Mismatch Check: Booking MUST belong to the selected customer
-  if (booking.customer_id !== customer_id) {
+  if (booking.customer_id !== resolvedCustomerId) {
     throw new BadRequestError(
-      `Booking ${booking_id} does not belong to customer ${customer_id}. Customer mismatch.`
+      `Booking ${booking_id} does not belong to customer ${resolvedCustomerId}. Customer mismatch.`
     );
   }
 
@@ -84,7 +90,7 @@ const createSchedule = async (data, creatorId) => {
     const schedule = await tx.recurringPaymentSchedule.create({
       data: {
         booking_id,
-        customer_id,
+        customer_id: resolvedCustomerId,
         amount_per_cycle: Number(amount_per_cycle),
         interval,
         start_date: new Date(start_date),
@@ -111,24 +117,28 @@ const createSchedule = async (data, creatorId) => {
       },
     });
 
-    await tx.auditLog.create({
+    return schedule;
+  });
+
+  try {
+    await prisma.auditLog.create({
       data: {
         user_id: creatorId,
         action: 'CREATE_RECURRING_SCHEDULE',
         module: 'RECURRING_PAYMENT',
-        record_id: schedule.id,
+        record_id: result.id,
         new_value: JSON.stringify({
-          booking_id: schedule.booking_id,
-          customer_id: schedule.customer_id,
-          amount_per_cycle: schedule.amount_per_cycle,
-          interval: schedule.interval,
-          next_due_date: schedule.next_due_date,
+          booking_id: result.booking_id,
+          customer_id: result.customer_id,
+          amount_per_cycle: result.amount_per_cycle,
+          interval: result.interval,
+          next_due_date: result.next_due_date,
         }),
       },
     });
-
-    return schedule;
-  });
+  } catch (auditErr) {
+    logger.warn('Audit log creation warning:', auditErr);
+  }
 
   const calculatedState = calculateScheduleState(result);
   logger.info(`RecurringPaymentSchedule ${result.id} created successfully by user ${creatorId}.`);

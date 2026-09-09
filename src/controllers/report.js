@@ -65,8 +65,8 @@ const getRevenue = async (req, res, next) => {
     if (req.query.export) {
       const exportData = payments.map(p => ({
         payment_number: p.payment_number,
-        booking_number: p.booking.booking_number,
-        customer: p.customer.full_name,
+        booking_number: p.booking ? p.booking.booking_number : (p.booking_id ? `BK-${p.booking_id.substring(0, 8)}` : 'Standalone / Direct Payment'),
+        customer: p.customer ? p.customer.full_name : 'N/A',
         payment_method: p.payment_method,
         amount: p.amount,
         paid_amount: p.paid_amount,

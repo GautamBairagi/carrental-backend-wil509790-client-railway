@@ -21,8 +21,12 @@ const validateCreateSchedule = (req, res, next) => {
     return next(new BadRequestError('booking_id is required and must be a string.'));
   }
 
-  if (!customer_id || typeof customer_id !== 'string') {
-    return next(new BadRequestError('customer_id is required and must be a string.'));
+  if (!customer_id) {
+    if (!booking_id) {
+      return next(new BadRequestError('customer_id or booking_id is required.'));
+    }
+  } else if (typeof customer_id !== 'string') {
+    return next(new BadRequestError('customer_id must be a string.'));
   }
 
   const numericAmount = Number(amount_per_cycle);

@@ -185,7 +185,7 @@ const getDeliveries = async (queryFilters, currentUserId, currentUserRole) => {
     ];
   }
 
-  const [deliveries, total] = await prisma.$transaction([
+  const [deliveries, total] = await Promise.all([
     prisma.delivery.findMany({
       where,
       skip,

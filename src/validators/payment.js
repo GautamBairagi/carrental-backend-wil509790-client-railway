@@ -40,9 +40,9 @@ const validateCreateTransaction = (req, res, next) => {
     return next(new BadRequestError('Amount must be a positive number.'));
   }
 
-  const allowedPaymentMethods = ['CREDIT_DEBIT_CARD', 'ZELLE', 'CASH_APP', 'PAY_AT_DELIVERY'];
+  const allowedPaymentMethods = ['CREDIT_DEBIT_CARD', 'ZELLE', 'CASH_APP', 'PAY_AT_DELIVERY', 'CASH', 'BANK_TRANSFER'];
   if (!paymentMethod || !allowedPaymentMethods.includes(paymentMethod)) {
-    return next(new BadRequestError('A valid payment method (CREDIT_DEBIT_CARD, ZELLE, CASH_APP, PAY_AT_DELIVERY) is required.'));
+    return next(new BadRequestError('A valid payment method (CREDIT_DEBIT_CARD, ZELLE, CASH_APP, PAY_AT_DELIVERY, CASH, BANK_TRANSFER) is required.'));
   }
 
   if (transactionReference && typeof transactionReference !== 'string') {
