@@ -16,7 +16,6 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
   'https://novadrive-carrentals.netlify.app',
-  'https://novadriverentals.com',
   process.env.FRONTEND_URL
 ].filter(Boolean);
 
