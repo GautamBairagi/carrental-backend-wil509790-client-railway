@@ -435,7 +435,7 @@ const updatePaymentStatusManual = async (id, statusBody, currentUserId, currentU
     });
 
     // Cascade to booking if transitioned to Paid
-    if (status === 'Paid' && oldStatus !== 'Paid') {
+    if (status === 'Paid' && oldStatus !== 'Paid' && payment.booking_id) {
       const booking = await tx.booking.findUnique({ where: { id: payment.booking_id } });
       if (booking) {
         await tx.booking.update({

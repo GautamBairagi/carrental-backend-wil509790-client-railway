@@ -3,6 +3,7 @@ const prisma = require('../config/db');
 const { BadRequestError, NotFoundError } = require('../utils/errors');
 const { success } = require('../utils/response');
 const notificationService = require('../services/notification');
+const paymentService = require('../services/payment');
 
 const confirmStripePayment = async (req, res, next) => {
   try {
@@ -79,29 +80,32 @@ const confirmStripePayment = async (req, res, next) => {
       });
 
       // 4d. Retrieve booking to update its status
-      const booking = await tx.booking.findUnique({
-        where: { id: payment.booking_id },
-      });
-
-      if (booking) {
-        await tx.booking.update({
+      let booking = null;
+      if (payment.booking_id) {
+        booking = await tx.booking.findUnique({
           where: { id: payment.booking_id },
-          data: {
-            payment_completed: true,
-            status: 'Payment_Completed',
-          },
         });
 
-        // 4e. Log Booking Status History
-        await tx.bookingStatusHistory.create({
-          data: {
-            booking_id: payment.booking_id,
-            old_status: booking.status,
-            new_status: 'Payment_Completed',
-            changed_by: changedByUserId,
-            notes: 'Stripe payment completed in full. Booking status updated to Payment Completed.',
-          },
-        });
+        if (booking) {
+          await tx.booking.update({
+            where: { id: payment.booking_id },
+            data: {
+              payment_completed: true,
+              status: 'Payment_Completed',
+            },
+          });
+
+          // 4e. Log Booking Status History
+          await tx.bookingStatusHistory.create({
+            data: {
+              booking_id: payment.booking_id,
+              old_status: booking.status,
+              new_status: 'Payment_Completed',
+              changed_by: changedByUserId,
+              notes: 'Stripe payment completed in full. Booking status updated to Payment Completed.',
+            },
+          });
+        }
       }
 
       return updated;
@@ -109,10 +113,13 @@ const confirmStripePayment = async (req, res, next) => {
 
     // 5. Send Notification
     try {
-      const booking = await prisma.booking.findUnique({ where: { id: payment.booking_id } });
+      let booking = null;
+      if (payment.booking_id) {
+        booking = await prisma.booking.findUnique({ where: { id: payment.booking_id } });
+      }
       await notificationService.createNotification({
         title: 'Payment Completed',
-        message: `Stripe payment of $${payment.amount} completed for booking ${booking ? booking.booking_number : 'N/A'}.`,
+        message: `Stripe payment of $${payment.amount} completed${booking ? ` for booking ${booking.booking_number}` : ' at back-office counter'}.`,
         type: 'PAYMENT',
         priority: 'HIGH',
         creatorId: changedByUserId,
@@ -127,6 +134,53 @@ const confirmStripePayment = async (req, res, next) => {
   }
 };
 
+const createPaymentIntent = async (req, res, next) => {
+  try {
+    const { amount, currency = 'usd', bookingId, customerId, vehicleId, paymentMethod, transactionReference, notes } = req.body;
+
+    if (!amount || amount <= 0) {
+      throw new BadRequestError('Invalid amount provided.');
+    }
+
+    // Convert to cents for Stripe
+    const amountInCents = Math.round(amount * 100);
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amountInCents,
+      currency,
+      automatic_payment_methods: {
+        enabled: true,
+      },
+    });
+
+    // Create DB Payment record (Pending status)
+    const paymentData = {
+      bookingId,
+      customerId,
+      vehicleId,
+      amount,
+      paymentMethod: paymentMethod || 'CREDIT_DEBIT_CARD',
+      transactionReference: paymentIntent.id,
+      notes: notes || 'Stripe intent initialized for counter payment'
+    };
+
+    // We can assume user is authenticated if they hit this, but we'll use a fallback ID just in case
+    const userId = req.user?.id || (await prisma.user.findFirst({ where: { role: 'ADMIN', is_deleted: false } })).id;
+    
+    // This will create a pending payment in the database
+    const payment = await paymentService.createPayment(paymentData, userId);
+
+    return success(res, 'Payment Intent created successfully', {
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+      paymentId: payment.id
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   confirmStripePayment,
+  createPaymentIntent,
 };
