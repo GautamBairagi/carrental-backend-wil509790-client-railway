@@ -4,6 +4,7 @@ const { BadRequestError, NotFoundError } = require('../utils/errors');
 const { success } = require('../utils/response');
 const notificationService = require('../services/notification');
 const paymentService = require('../services/payment');
+const logger = require('../utils/logger');
 
 const confirmStripePayment = async (req, res, next) => {
   try {
@@ -180,7 +181,129 @@ const createPaymentIntent = async (req, res, next) => {
   }
 };
 
+const handleStripeWebhook = async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    if (process.env.STRIPE_WEBHOOK_SECRET && sig) {
+      event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    } else {
+      event = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    }
+  } catch (err) {
+    logger.error('Stripe webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  logger.info(`Received Stripe webhook event: ${event.type} [${event.id}]`);
+
+  const adminUser = await prisma.user.findFirst({ where: { role: 'ADMIN', is_deleted: false } });
+  const adminId = adminUser ? adminUser.id : 'system';
+
+  try {
+    switch (event.type) {
+      case 'payment_intent.succeeded': {
+        const paymentIntent = event.data.object;
+        const scheduleId = paymentIntent.metadata?.schedule_id;
+        if (scheduleId) {
+          const recurringService = require('../services/recurringPayment');
+          await recurringService.processCyclePayment(
+            scheduleId,
+            {
+              amount: paymentIntent.amount_received ? (paymentIntent.amount_received / 100) : undefined,
+              payment_method: 'CREDIT_DEBIT_CARD',
+              transaction_reference: paymentIntent.id,
+              notes: `Automated recurring Stripe charge for schedule ${scheduleId}`,
+              skipStripeCharge: true,
+            },
+            adminId
+          );
+        }
+        break;
+      }
+
+      case 'invoice.payment_succeeded': {
+        const invoice = event.data.object;
+        const subscriptionId = invoice.subscription;
+        const recurringService = require('../services/recurringPayment');
+        const schedule = await prisma.recurringPaymentSchedule.findFirst({
+          where: {
+            OR: [
+              { stripe_subscription_id: subscriptionId },
+              { id: invoice.metadata?.schedule_id }
+            ]
+          }
+        });
+
+        if (schedule) {
+          await recurringService.processCyclePayment(
+            schedule.id,
+            {
+              amount: invoice.amount_paid ? (invoice.amount_paid / 100) : Number(schedule.amount_per_cycle),
+              payment_method: 'CREDIT_DEBIT_CARD',
+              transaction_reference: invoice.payment_intent || invoice.id,
+              notes: `Stripe Subscription Invoice ${invoice.id} paid.`,
+              skipStripeCharge: true,
+            },
+            adminId
+          );
+        }
+        break;
+      }
+
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object;
+        const subscriptionId = invoice.subscription;
+        const schedule = await prisma.recurringPaymentSchedule.findFirst({
+          where: {
+            OR: [
+              { stripe_subscription_id: subscriptionId },
+              { id: invoice.metadata?.schedule_id }
+            ]
+          }
+        });
+
+        if (schedule) {
+          const attempts = (schedule.failed_attempts || 0) + 1;
+          await prisma.recurringPaymentSchedule.update({
+            where: { id: schedule.id },
+            data: {
+              failed_attempts: attempts,
+              last_error: `Stripe invoice payment failed: ${invoice.last_payment_error?.message || 'Card declined'}`,
+              status: attempts >= 2 ? 'FAILED' : schedule.status,
+            }
+          });
+          logger.warn(`Recurring payment schedule ${schedule.id} invoice failed. Attempts: ${attempts}`);
+        }
+        break;
+      }
+
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object;
+        const recurringService = require('../services/recurringPayment');
+        const schedule = await prisma.recurringPaymentSchedule.findFirst({
+          where: { stripe_subscription_id: sub.id }
+        });
+        if (schedule && schedule.status !== 'COMPLETED') {
+          await recurringService.cancelSchedule(schedule.id, 'Stripe subscription cancelled', adminId);
+        }
+        break;
+      }
+
+      default:
+        logger.info(`Unhandled Stripe event type: ${event.type}`);
+    }
+
+    return res.status(200).json({ received: true });
+  } catch (err) {
+    logger.error('Error handling Stripe webhook event:', err);
+    return res.status(500).json({ error: 'Webhook processing error', message: err.message });
+  }
+};
+
 module.exports = {
   confirmStripePayment,
   createPaymentIntent,
+  handleStripeWebhook,
 };

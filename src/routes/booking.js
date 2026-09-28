@@ -23,6 +23,7 @@ router.put('/:id', authorize('ADMIN', 'OPERATIONS_MANAGER'), bookingValidator.va
 
 // Status, Notes and Drivers Assignments (Admin and Operations Manager)
 router.patch('/:id/status', authorize('ADMIN', 'OPERATIONS_MANAGER'), bookingValidator.validateStatusUpdate, bookingController.updateStatus);
+router.patch('/:id/extend', authorize('ADMIN', 'OPERATIONS_MANAGER'), bookingController.extendBooking);
 router.patch('/:id/assign-driver', authorize('ADMIN', 'OPERATIONS_MANAGER'), bookingValidator.validateDriverAssignment, bookingController.assignDriver);
 router.post('/:id/notes', authorize('ADMIN', 'OPERATIONS_MANAGER'), bookingValidator.validateBookingNote, bookingController.addNote);
 

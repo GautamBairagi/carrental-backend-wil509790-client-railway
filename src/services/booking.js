@@ -763,6 +763,144 @@ const createPublicBooking = async (bookingBody) => {
   return newBooking;
 };
 
+const extendBooking = async (id, newReturnDate, currentUserId, currentUserRole, recurringPayment = null) => {
+  if (currentUserRole === 'DRIVER') {
+    throw new ForbiddenError('Drivers are not permitted to extend bookings.');
+  }
+
+  const booking = await prisma.booking.findUnique({
+    where: { id },
+    include: { vehicle: true }
+  });
+
+  if (!booking || booking.is_deleted) {
+    throw new NotFoundError('Booking not found.');
+  }
+
+  // Only allow extending active-stage bookings
+  const allowedStatuses = [
+    'Active_Rental', 'Delivered', 'Payment_Completed',
+    'Contract_Signed', 'License_Verified', 'Driver_Assigned', 'In_Transit'
+  ];
+  if (!allowedStatuses.includes(booking.status)) {
+    throw new BadRequestError(`Booking in status "${booking.status}" cannot be extended.`);
+  }
+
+  const currentReturnDate = new Date(booking.return_date);
+  const extensionDate = new Date(newReturnDate);
+
+  if (extensionDate <= currentReturnDate) {
+    throw new BadRequestError('New return date must be after the current return date.');
+  }
+
+  // Check for scheduling conflicts with other bookings for this vehicle
+  const overlap = await checkOverlappingBookings(booking.vehicle_id, booking.pickup_date, newReturnDate, id);
+  if (overlap) {
+    throw new BadRequestError('Extension creates a scheduling conflict with another booking for this vehicle.');
+  }
+
+  // Recalculate rental days and costs (tax = 0 per client requirement)
+  const pickupDate = new Date(booking.pickup_date);
+  const newRentalDays = Math.ceil((extensionDate - pickupDate) / (1000 * 60 * 60 * 24));
+  const oldRentalDays = parseInt(booking.rental_days, 10) || 1;
+  const dailyRate = parseFloat(booking.subtotal) / oldRentalDays;
+  const newSubtotal = parseFloat((newRentalDays * dailyRate).toFixed(2));
+  const securityDeposit = parseFloat(booking.fees) || 0;
+  const newTotal = parseFloat((newSubtotal + securityDeposit).toFixed(2));
+
+  const extensionDays = newRentalDays - oldRentalDays;
+  const extensionCost = parseFloat((extensionDays * dailyRate).toFixed(2));
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const updatedBooking = await tx.booking.update({
+      where: { id },
+      data: {
+        return_date: extensionDate,
+        rental_days: newRentalDays,
+        subtotal: newSubtotal,
+        tax: 0,
+        total_amount: newTotal,
+      },
+    });
+
+    await tx.bookingStatusHistory.create({
+      data: {
+        booking_id: id,
+        old_status: booking.status,
+        new_status: booking.status,
+        changed_by: currentUserId,
+        notes: `Rental extended by ${extensionDays} day(s). New return date: ${newReturnDate}. Extension cost: $${extensionCost}.`,
+      },
+    });
+
+    // Create pending payment record for the extension cost
+    if (extensionCost > 0) {
+      const year = new Date().getFullYear();
+      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+      const paymentNumber = `PAY-EXT-${year}-${randomSuffix}`;
+
+      await tx.payment.create({
+        data: {
+          payment_number: paymentNumber,
+          booking_id: id,
+          customer_id: booking.customer_id,
+          vehicle_id: booking.vehicle_id,
+          payment_method: booking.payment_method,
+          amount: extensionCost,
+          paid_amount: 0.00,
+          remaining_amount: extensionCost,
+          status: 'Pending',
+          notes: `Extension payment: ${extensionDays} additional day(s) at $${dailyRate.toFixed(2)}/day.`,
+        },
+      });
+    }
+
+    return updatedBooking;
+  });
+
+  await auditService.logAction(
+    currentUserId,
+    'Booking Extended',
+    'BOOKING',
+    id,
+    { return_date: booking.return_date, rental_days: booking.rental_days, total_amount: booking.total_amount },
+    { return_date: extensionDate, rental_days: newRentalDays, total_amount: newTotal }
+  );
+
+  await notificationService.createNotification({
+    title: 'Booking Extended',
+    message: `Booking ${booking.booking_number} has been extended by ${extensionDays} day(s). New return date: ${newReturnDate}.`,
+    type: 'BOOKING',
+    priority: 'MEDIUM',
+    creatorId: currentUserId,
+  });
+
+  let recurringSchedule = null;
+  if (recurringPayment) {
+    try {
+      const recurringService = require('./recurringPayment');
+      const weeklyRate = parseFloat((7 * dailyRate).toFixed(2));
+      const requestedPayments = parseInt(recurringPayment.numberOfPayments, 10) || Math.max(1, Math.round(extensionDays / 7));
+
+      recurringSchedule = await recurringService.createSchedule({
+        booking_id: id,
+        customer_id: booking.customer_id,
+        amount_per_cycle: weeklyRate,
+        interval: 'WEEKLY',
+        start_date: recurringPayment.startDate ? new Date(recurringPayment.startDate) : currentReturnDate,
+        end_date: extensionDate,
+        total_payments: requestedPayments,
+        payment_method: recurringPayment.paymentMethod || booking.payment_method,
+        auto_charge: !!recurringPayment.autoCharge,
+      }, currentUserId);
+    } catch (recErr) {
+      console.warn('Recurring schedule setup during extension warning:', recErr.message);
+    }
+  }
+
+  return { ...updated, extensionDays, extensionCost, newRentalDays, recurringSchedule };
+};
+
 const cancelPublicBooking = async (id) => {
   const booking = await prisma.booking.findUnique({
     where: { id },
@@ -821,6 +959,7 @@ module.exports = {
   createBooking,
   createPublicBooking,
   cancelPublicBooking,
+  extendBooking,
   getBookings,
   getBookingById,
   updateBooking,

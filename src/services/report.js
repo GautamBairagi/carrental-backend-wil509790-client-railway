@@ -408,7 +408,7 @@ const getRevenueReport = async (queryFilters, currentUserRole) => {
 const getVehiclePerformanceReport = async (queryFilters, currentUserRole) => {
   assertReportAccess(currentUserRole);
 
-  const { start_date, end_date, vehicle_id, startDate, endDate } = queryFilters;
+  const { start_date, end_date, vehicle_id, customer_id, startDate, endDate } = queryFilters;
   const sDate = start_date || startDate;
   const eDate = end_date || endDate;
 
@@ -416,36 +416,63 @@ const getVehiclePerformanceReport = async (queryFilters, currentUserRole) => {
   if (vehicle_id) {
     whereVehicle.id = vehicle_id;
   }
+  if (customer_id) {
+    whereVehicle.bookings = {
+      some: {
+        customer_id: customer_id,
+        is_deleted: false,
+      },
+    };
+  }
 
   const vehicles = await prisma.vehicle.findMany({
     where: whereVehicle,
     include: {
       bookings: {
-        where: { is_deleted: false },
-        include: {
-          customer: { select: { full_name: true, email: true } },
+        where: {
+          is_deleted: false,
+          ...(customer_id ? { customer_id } : {}),
         },
+        include: {
+          customer: { select: { id: true, full_name: true, email: true, phone: true } },
+          payments: {
+            select: {
+              id: true,
+              payment_number: true,
+              amount: true,
+              paid_amount: true,
+              remaining_amount: true,
+              status: true,
+              payment_method: true,
+            },
+          },
+        },
+        orderBy: { pickup_date: 'desc' },
       },
     },
   });
 
   // Date range for metrics
   const now = new Date();
-  const periodStart = sDate ? new Date(sDate) : new Date(now.getFullYear(), 0, 1); // Default to start of current year
-  const periodEnd = eDate ? new Date(eDate) : new Date();
+  const periodStart = sDate ? new Date(sDate) : new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  const periodEnd = eDate ? new Date(eDate) : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
   // Total period days calculation
   const totalPeriodMs = Math.max(1, periodEnd.getTime() - periodStart.getTime());
   const totalPeriodDays = Math.ceil(totalPeriodMs / (1000 * 60 * 60 * 24));
 
   // Fetch all transactions in period
+  const whereTx = {
+    created_at: { gte: periodStart, lte: periodEnd },
+  };
+  if (customer_id) {
+    whereTx.payment = { customer_id };
+  }
   const transactions = await prisma.paymentTransaction.findMany({
-    where: {
-      created_at: { gte: periodStart, lte: periodEnd },
-    },
+    where: whereTx,
     include: {
       payment: {
-        select: { booking_id: true, vehicle_id: true, status: true },
+        select: { id: true, booking_id: true, vehicle_id: true, status: true, customer_id: true },
       },
     },
   });
@@ -509,15 +536,50 @@ const getVehiclePerformanceReport = async (queryFilters, currentUserRole) => {
       revenue: Number(monthlyRevenueMap[month].toFixed(2)),
     }));
 
-    // 5. Currently Assigned Customer
+    // 5. Bookings details and count for this vehicle in this period
+    const periodBookings = vehicleBookings.filter((b) => {
+      const pDate = new Date(b.pickup_date);
+      const rDate = new Date(b.return_date);
+      const overlaps = rDate >= periodStart && pDate <= periodEnd;
+      const hasTx = vTransactions.some((t) => t.payment && t.payment.booking_id === b.id);
+      return overlaps || hasTx;
+    });
+
+    const bookingsDetail = periodBookings.map((b) => {
+      const bTransactions = vTransactions.filter((t) => t.payment && t.payment.booking_id === b.id);
+      const bRevenue = Number(bTransactions.reduce((sum, t) => sum + Number(t.amount), 0).toFixed(2));
+      const primaryPayment = b.payments && b.payments.length > 0 ? b.payments[0] : null;
+      const paymentStatus = primaryPayment ? primaryPayment.status : (b.payment_completed ? 'Paid' : 'Pending');
+
+      return {
+        bookingId: b.id,
+        bookingNumber: b.booking_number,
+        customerId: b.customer?.id,
+        customerName: b.customer?.full_name || 'N/A',
+        customerEmail: b.customer?.email || '',
+        customerPhone: b.customer?.phone || '',
+        pickupDate: b.pickup_date,
+        returnDate: b.return_date,
+        rentalPeriod: `${new Date(b.pickup_date).toLocaleDateString()} - ${new Date(b.return_date).toLocaleDateString()}`,
+        rentalDays: b.rental_days,
+        totalAmount: Number(b.total_amount),
+        revenue: bRevenue,
+        paymentStatus,
+        bookingStatus: b.status,
+      };
+    });
+
+    // 6. Currently Assigned Customer
     const activeBooking = vehicleBookings.find(
       (b) => b.status === 'Active_Rental' || b.status === 'Vehicle_Delivered' || b.status === 'In_Trip'
     );
-    const assignedCustomer = activeBooking && activeBooking.customer ? activeBooking.customer.full_name : null;
+    const assignedCustomer = activeBooking && activeBooking.customer ? activeBooking.customer.full_name : (
+      bookingsDetail.length > 0 ? bookingsDetail[0].customerName : null
+    );
 
-    // 6. Utilization Rate Calculation
+    // 7. Utilization Rate Calculation
     let rentedDays = 0;
-    vehicleBookings.forEach((b) => {
+    periodBookings.forEach((b) => {
       const pDate = new Date(b.pickup_date);
       const rDate = new Date(b.return_date);
       if (rDate >= periodStart && pDate <= periodEnd) {
@@ -542,6 +604,9 @@ const getVehiclePerformanceReport = async (queryFilters, currentUserRole) => {
       revenue: vehicleRevenue,
       expenses: vehicleExpenses,
       netProfit,
+      totalBookings: periodBookings.length,
+      bookingsCount: periodBookings.length,
+      bookings: bookingsDetail,
       paymentCount: vTransactions.length,
       monthlyRevenue,
       assignedCustomer,

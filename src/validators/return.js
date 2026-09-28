@@ -65,6 +65,13 @@ const validateAddPhoto = (req, res, next) => {
 };
 
 const validateCaptureSignatures = (req, res, next) => {
+  if (typeof req.body.customerSignature === 'boolean' && req.body.customerSignature) {
+    req.body.customerSignature = 'Digitally captured customer signature';
+  }
+  if (typeof req.body.driverSignature === 'boolean' && req.body.driverSignature) {
+    req.body.driverSignature = 'Digitally captured driver signature';
+  }
+
   const { customerSignature, driverSignature } = req.body;
 
   if (!customerSignature || typeof customerSignature !== 'string') {

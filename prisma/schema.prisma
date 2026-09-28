@@ -970,6 +970,7 @@ enum ScheduleStatus {
   PAUSED
   COMPLETED
   CANCELLED
+  FAILED
 }
 
 model Expense {
@@ -1001,19 +1002,27 @@ model Expense {
 }
 
 model RecurringPaymentSchedule {
-  id               String             @id @default(uuid())
-  booking_id       String
-  customer_id      String
-  amount_per_cycle Decimal            @db.Decimal(10, 2)
-  interval         RecurrenceInterval
-  next_due_date    DateTime
-  start_date       DateTime
-  end_date         DateTime?
-  status           ScheduleStatus     @default(ACTIVE)
-  payment_method   PaymentMethod
-  auto_charge      Boolean            @default(false)
-  created_at       DateTime           @default(now())
-  updated_at       DateTime           @updatedAt
+  id                     String             @id @default(uuid())
+  booking_id             String
+  customer_id            String
+  amount_per_cycle       Decimal            @db.Decimal(10, 2)
+  interval               RecurrenceInterval
+  next_due_date          DateTime
+  start_date             DateTime
+  end_date               DateTime?
+  status                 ScheduleStatus     @default(ACTIVE)
+  payment_method         PaymentMethod
+  auto_charge            Boolean            @default(false)
+  total_payments         Int                @default(1)
+  payments_completed     Int                @default(0)
+  payments_remaining     Int                @default(1)
+  stripe_subscription_id String?            @db.VarChar(255)
+  stripe_customer_id     String?            @db.VarChar(255)
+  last_payment_date      DateTime?
+  failed_attempts        Int                @default(0)
+  last_error             String?            @db.Text
+  created_at             DateTime           @default(now())
+  updated_at             DateTime           @updatedAt
 
   booking  Booking  @relation(fields: [booking_id], references: [id], onDelete: Cascade)
   customer Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
