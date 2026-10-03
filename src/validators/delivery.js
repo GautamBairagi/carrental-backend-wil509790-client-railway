@@ -48,7 +48,7 @@ const validateUpdateStatus = (req, res, next) => {
 };
 
 const validateAddInspection = (req, res, next) => {
-  let { fuelLevel, mileage, vehicleCondition, damageNotes, odometerOut, fuelLevelOut } = req.body;
+  const { fuelLevel, mileage, vehicleCondition, damageNotes, odometerOut, fuelLevelOut } = req.body;
 
   if (typeof fuelLevel !== 'number' || fuelLevel < 0 || fuelLevel > 100) {
     return next(new BadRequestError('Fuel level must be a number between 0 and 100.'));
@@ -64,15 +64,6 @@ const validateAddInspection = (req, res, next) => {
 
   if (damageNotes && typeof damageNotes !== 'string') {
     return next(new BadRequestError('Damage notes must be a string.'));
-  }
-
-  if (odometerOut === undefined && typeof mileage === 'number') {
-    req.body.odometerOut = mileage;
-    odometerOut = mileage;
-  }
-  if (fuelLevelOut === undefined && typeof fuelLevel === 'number') {
-    req.body.fuelLevelOut = fuelLevel;
-    fuelLevelOut = fuelLevel;
   }
 
   if (typeof odometerOut !== 'number' || odometerOut < 0) {
@@ -111,13 +102,6 @@ const validateAddPhoto = (req, res, next) => {
 };
 
 const validateCaptureSignatures = (req, res, next) => {
-  if (typeof req.body.customerSignature === 'boolean' && req.body.customerSignature) {
-    req.body.customerSignature = 'Digitally captured customer signature';
-  }
-  if (typeof req.body.driverSignature === 'boolean' && req.body.driverSignature) {
-    req.body.driverSignature = 'Digitally captured driver signature';
-  }
-
   const { customerSignature, driverSignature, handoverTime } = req.body;
 
   if (!customerSignature || typeof customerSignature !== 'string') {

@@ -113,21 +113,10 @@ const getVehicleBookedDates = async (req, res, next) => {
   }
 };
 
-const extendBooking = async (req, res, next) => {
-  try {
-    const { newReturnDate, recurringPayment } = req.body;
-    const result = await bookingService.extendBooking(req.params.id, newReturnDate, req.user.id, req.user.role, recurringPayment);
-    return success(res, 'Booking extended successfully.', { booking: result });
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   create,
   createPublicBooking,
   cancelPublicBooking,
-  extendBooking,
   list,
   getById,
   update,

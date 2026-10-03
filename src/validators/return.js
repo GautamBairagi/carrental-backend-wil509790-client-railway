@@ -19,16 +19,7 @@ const validateCreateReturn = (req, res, next) => {
 };
 
 const validateAddInspection = (req, res, next) => {
-  let { odometerIn, fuelLevelIn, vehicleCondition, damageNotes, mileage, fuelLevel } = req.body;
-
-  if (odometerIn === undefined && typeof mileage === 'number') {
-    req.body.odometerIn = mileage;
-    odometerIn = mileage;
-  }
-  if (fuelLevelIn === undefined && typeof fuelLevel === 'number') {
-    req.body.fuelLevelIn = fuelLevel;
-    fuelLevelIn = fuelLevel;
-  }
+  const { odometerIn, fuelLevelIn, vehicleCondition, damageNotes } = req.body;
 
   if (typeof odometerIn !== 'number' || odometerIn < 0) {
     return next(new BadRequestError('Odometer in must be a non-negative number.'));
@@ -65,13 +56,6 @@ const validateAddPhoto = (req, res, next) => {
 };
 
 const validateCaptureSignatures = (req, res, next) => {
-  if (typeof req.body.customerSignature === 'boolean' && req.body.customerSignature) {
-    req.body.customerSignature = 'Digitally captured customer signature';
-  }
-  if (typeof req.body.driverSignature === 'boolean' && req.body.driverSignature) {
-    req.body.driverSignature = 'Digitally captured driver signature';
-  }
-
   const { customerSignature, driverSignature } = req.body;
 
   if (!customerSignature || typeof customerSignature !== 'string') {

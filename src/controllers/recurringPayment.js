@@ -65,16 +65,6 @@ const getOverdue = async (req, res, next) => {
   }
 };
 
-const cancel = async (req, res, next) => {
-  try {
-    const { reason } = req.body;
-    const schedule = await recurringService.cancelSchedule(req.params.id, reason, req.user.id);
-    return success(res, 'Recurring payment schedule cancelled successfully.', { schedule });
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   create,
   list,
@@ -82,6 +72,5 @@ module.exports = {
   update,
   updateStatus,
   processCycle,
-  cancel,
   getOverdue,
 };

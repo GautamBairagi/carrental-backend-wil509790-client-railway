@@ -49,18 +49,23 @@ const createSchedule = async (data, creatorId) => {
     booking_id,
     customer_id,
     amount_per_cycle,
-    interval = 'WEEKLY',
+    interval,
     start_date,
     next_due_date,
     end_date,
-    total_payments = 1,
     payment_method = 'CREDIT_DEBIT_CARD',
     auto_charge = false,
   } = data;
 
-  let resolvedCustomerId = customer_id;
+  // 1. Verify customer exists
+  const customer = await prisma.customer.findUnique({
+    where: { id: customer_id },
+  });
+  if (!customer) {
+    throw new NotFoundError(`Customer with ID ${customer_id} not found.`);
+  }
 
-  // 1. Verify booking exists
+  // 2. Verify booking exists
   const booking = await prisma.booking.findUnique({
     where: { id: booking_id },
   });
@@ -68,77 +73,25 @@ const createSchedule = async (data, creatorId) => {
     throw new NotFoundError(`Booking with ID ${booking_id} not found.`);
   }
 
-  if (!resolvedCustomerId && booking.customer_id) {
-    resolvedCustomerId = booking.customer_id;
-  }
-
-  // 2. Verify customer exists
-  const customer = await prisma.customer.findUnique({
-    where: { id: resolvedCustomerId },
-  });
-  if (!customer) {
-    throw new NotFoundError(`Customer with ID ${resolvedCustomerId} not found.`);
-  }
-
   // 3. Customer-Booking Mismatch Check: Booking MUST belong to the selected customer
-  if (booking.customer_id !== resolvedCustomerId) {
+  if (booking.customer_id !== customer_id) {
     throw new BadRequestError(
-      `Booking ${booking_id} does not belong to customer ${resolvedCustomerId}. Customer mismatch.`
+      `Booking ${booking_id} does not belong to customer ${customer_id}. Customer mismatch.`
     );
-  }
-
-  const numPayments = Math.max(1, parseInt(total_payments, 10) || 1);
-  const startDateObj = new Date(start_date);
-  const nextDueDateObj = next_due_date ? new Date(next_due_date) : new Date(startDateObj);
-
-  // Auto-calculate end_date if omitted: (numPayments * 7 days for WEEKLY)
-  let calculatedEndDate = end_date ? new Date(end_date) : null;
-  if (!calculatedEndDate) {
-    calculatedEndDate = new Date(startDateObj);
-    const daysToAdd = interval === 'WEEKLY' ? (numPayments * 7) : (numPayments * 14);
-    calculatedEndDate.setDate(calculatedEndDate.getDate() + daysToAdd);
-  }
-
-  // Stripe Customer check if auto_charge requested
-  let stripeCustomerId = null;
-  if (auto_charge && payment_method === 'CREDIT_DEBIT_CARD') {
-    try {
-      const stripe = require('../config/stripe');
-      if (process.env.STRIPE_SECRET_KEY && stripe) {
-        const existingStripeCustomers = await stripe.customers.list({ email: customer.email, limit: 1 });
-        if (existingStripeCustomers.data?.length > 0) {
-          stripeCustomerId = existingStripeCustomers.data[0].id;
-        } else {
-          const newCust = await stripe.customers.create({
-            email: customer.email,
-            name: customer.full_name,
-            phone: customer.phone || undefined,
-            metadata: { customer_id: customer.id, booking_id },
-          });
-          stripeCustomerId = newCust.id;
-        }
-      }
-    } catch (sErr) {
-      logger.warn(`Stripe customer lookup warning for recurring schedule: ${sErr.message}`);
-    }
   }
 
   const result = await prisma.$transaction(async (tx) => {
     const schedule = await tx.recurringPaymentSchedule.create({
       data: {
         booking_id,
-        customer_id: resolvedCustomerId,
+        customer_id,
         amount_per_cycle: Number(amount_per_cycle),
         interval,
-        start_date: startDateObj,
-        next_due_date: nextDueDateObj,
-        end_date: calculatedEndDate,
+        start_date: new Date(start_date),
+        next_due_date: new Date(next_due_date),
+        end_date: end_date ? new Date(end_date) : null,
         payment_method,
-        auto_charge: !!auto_charge,
-        total_payments: numPayments,
-        payments_completed: 0,
-        payments_remaining: numPayments,
-        stripe_customer_id: stripeCustomerId,
+        auto_charge: false,
         status: 'ACTIVE',
       },
       include: {
@@ -158,28 +111,24 @@ const createSchedule = async (data, creatorId) => {
       },
     });
 
-    return schedule;
-  });
-
-  try {
-    await prisma.auditLog.create({
+    await tx.auditLog.create({
       data: {
         user_id: creatorId,
         action: 'CREATE_RECURRING_SCHEDULE',
         module: 'RECURRING_PAYMENT',
-        record_id: result.id,
+        record_id: schedule.id,
         new_value: JSON.stringify({
-          booking_id: result.booking_id,
-          customer_id: result.customer_id,
-          amount_per_cycle: result.amount_per_cycle,
-          interval: result.interval,
-          next_due_date: result.next_due_date,
+          booking_id: schedule.booking_id,
+          customer_id: schedule.customer_id,
+          amount_per_cycle: schedule.amount_per_cycle,
+          interval: schedule.interval,
+          next_due_date: schedule.next_due_date,
         }),
       },
     });
-  } catch (auditErr) {
-    logger.warn('Audit log creation warning:', auditErr);
-  }
+
+    return schedule;
+  });
 
   const calculatedState = calculateScheduleState(result);
   logger.info(`RecurringPaymentSchedule ${result.id} created successfully by user ${creatorId}.`);
@@ -410,13 +359,9 @@ const updateScheduleStatus = async (id, newStatus, updaterId) => {
   };
 };
 
-const processCyclePayment = async (id, cyclePaymentData = {}, updaterId) => {
+const processCyclePayment = async (id, cyclePaymentData, updaterId) => {
   const schedule = await prisma.recurringPaymentSchedule.findUnique({
     where: { id },
-    include: {
-      customer: { select: { id: true, full_name: true, email: true, phone: true } },
-      booking: { select: { id: true, booking_number: true, subtotal: true, total_amount: true } },
-    }
   });
 
   if (!schedule) {
@@ -427,129 +372,43 @@ const processCyclePayment = async (id, cyclePaymentData = {}, updaterId) => {
     throw new BadRequestError(`Cannot process payment for schedule in ${schedule.status} status.`);
   }
 
-  const cycleAmount = cyclePaymentData.amount ? Number(cyclePaymentData.amount) : Number(schedule.amount_per_cycle);
-  const transactionRef = cyclePaymentData.transaction_reference || `REC-CYCLE-${id.substring(0, 8)}-${Date.now()}`;
-
-  // Idempotency check: don't double record if this transaction_reference was already processed
-  const existingTx = await prisma.paymentTransaction.findFirst({
-    where: { transaction_reference: transactionRef }
-  });
-  if (existingTx) {
-    logger.info(`Transaction ${transactionRef} already recorded. Idempotent return.`);
-    return {
-      schedule: {
-        ...schedule,
-        calculated_state: calculateScheduleState(schedule)
-      },
-      transaction: existingTx,
-      idempotent: true
-    };
-  }
-
-  // 1. If auto_charge is enabled and card on file, execute Stripe charge
-  if (schedule.auto_charge && schedule.payment_method === 'CREDIT_DEBIT_CARD' && !cyclePaymentData.skipStripeCharge) {
-    try {
-      const stripe = require('../config/stripe');
-      if (process.env.STRIPE_SECRET_KEY && schedule.stripe_customer_id) {
-        const paymentMethods = await stripe.paymentMethods.list({
-          customer: schedule.stripe_customer_id,
-          type: 'card',
-        });
-        const defaultPm = paymentMethods.data?.[0];
-        if (defaultPm) {
-          const pi = await stripe.paymentIntents.create({
-            amount: Math.round(cycleAmount * 100),
-            currency: 'usd',
-            customer: schedule.stripe_customer_id,
-            payment_method: defaultPm.id,
-            off_session: true,
-            confirm: true,
-            description: `Weekly Rental - Schedule ${id.substring(0, 8)} Payment ${(schedule.payments_completed || 0) + 1}/${schedule.total_payments || 1}`,
-            metadata: {
-              schedule_id: schedule.id,
-              booking_id: schedule.booking_id,
-              cycle_number: String((schedule.payments_completed || 0) + 1),
-            },
-          });
-          cyclePaymentData.transaction_reference = pi.id;
-        }
-      }
-    } catch (chargeErr) {
-      logger.error('Automatic Stripe cycle charge failed:', chargeErr);
-      await prisma.recurringPaymentSchedule.update({
-        where: { id },
-        data: {
-          failed_attempts: (schedule.failed_attempts || 0) + 1,
-          last_error: chargeErr.message,
-          status: (schedule.failed_attempts || 0) >= 2 ? 'FAILED' : schedule.status,
-        },
-      });
-      throw new BadRequestError(`Automated recurring charge failed: ${chargeErr.message}`);
-    }
-  }
-
-  // 2. Increment completed count and decrement remaining
-  const newPaymentsCompleted = (schedule.payments_completed || 0) + 1;
-  const totalTarget = schedule.total_payments || 1;
-  const newPaymentsRemaining = Math.max(0, totalTarget - newPaymentsCompleted);
-
-  // 3. Calculate next due date using calendar logic
+  // 1. Calculate next due date using calendar month logic
   const nextDueDate = advanceNextDueDate(schedule.next_due_date, schedule.interval);
 
-  // 4. Check if finished
+  // 2. Check if end_date is reached
   let newStatus = schedule.status;
-  if (newPaymentsRemaining <= 0 || (schedule.end_date && nextDueDate > new Date(schedule.end_date))) {
+  if (schedule.end_date && nextDueDate > new Date(schedule.end_date)) {
     newStatus = 'COMPLETED';
   }
 
-  // 5. Link to booking's Payment record
-  let bookingPayment = await prisma.payment.findFirst({
+  // 3. Optional: Link actual money transaction to booking's Payment record if present
+  const bookingPayment = await prisma.payment.findFirst({
     where: { booking_id: schedule.booking_id },
   });
 
-  if (!bookingPayment) {
-    const year = new Date().getFullYear();
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    bookingPayment = await prisma.payment.create({
-      data: {
-        payment_number: `PAY-REC-${year}-${randomSuffix}`,
-        booking_id: schedule.booking_id,
-        customer_id: schedule.customer_id,
-        payment_method: schedule.payment_method,
-        amount: schedule.amount_per_cycle,
-        paid_amount: 0,
-        remaining_amount: schedule.amount_per_cycle,
-        status: 'Partially_Paid',
-      }
-    });
-  }
-
   let recordedTransaction = null;
+  const cycleAmount = cyclePaymentData.amount ? Number(cyclePaymentData.amount) : Number(schedule.amount_per_cycle);
+
   if (bookingPayment) {
     recordedTransaction = await paymentService.recordTransaction(
       bookingPayment.id,
       {
         amount: cycleAmount,
         paymentMethod: cyclePaymentData.payment_method || schedule.payment_method,
-        transactionReference: cyclePaymentData.transaction_reference || transactionRef,
-        notes: cyclePaymentData.notes || `Recurring weekly payment ${newPaymentsCompleted}/${totalTarget} for schedule ${id.substring(0, 8)}`,
+        transactionReference: cyclePaymentData.transaction_reference || `REC-CYCLE-${Date.now()}`,
+        notes: cyclePaymentData.notes || `Recurring cycle payment processed for schedule ${id}`,
       },
       updaterId
     );
   }
 
-  // 6. Advance schedule in database
+  // 4. Advance schedule next_due_date & status in database
   const updatedSchedule = await prisma.$transaction(async (tx) => {
     const updated = await tx.recurringPaymentSchedule.update({
       where: { id },
       data: {
-        payments_completed: newPaymentsCompleted,
-        payments_remaining: newPaymentsRemaining,
-        last_payment_date: new Date(),
-        next_due_date: newStatus === 'COMPLETED' ? schedule.next_due_date : nextDueDate,
+        next_due_date: nextDueDate,
         status: newStatus,
-        failed_attempts: 0,
-        last_error: null,
       },
       include: {
         customer: { select: { id: true, full_name: true, email: true, phone: true } },
@@ -563,24 +422,15 @@ const processCyclePayment = async (id, cyclePaymentData = {}, updaterId) => {
         action: 'PROCESS_RECURRING_CYCLE',
         module: 'RECURRING_PAYMENT',
         record_id: id,
-        old_value: JSON.stringify({
-          payments_completed: schedule.payments_completed,
-          next_due_date: schedule.next_due_date,
-          status: schedule.status
-        }),
-        new_value: JSON.stringify({
-          payments_completed: updated.payments_completed,
-          payments_remaining: updated.payments_remaining,
-          next_due_date: updated.next_due_date,
-          status: updated.status
-        }),
+        old_value: JSON.stringify({ next_due_date: schedule.next_due_date, status: schedule.status }),
+        new_value: JSON.stringify({ next_due_date: updated.next_due_date, status: updated.status }),
       },
     });
 
     return updated;
   });
 
-  logger.info(`Recurring cycle payment ${newPaymentsCompleted}/${totalTarget} processed for schedule ${id}. Status: ${newStatus}`);
+  logger.info(`Recurring cycle payment processed for schedule ${id}. Next due: ${nextDueDate.toISOString()}`);
 
   return {
     schedule: {
@@ -588,65 +438,6 @@ const processCyclePayment = async (id, cyclePaymentData = {}, updaterId) => {
       calculated_state: calculateScheduleState(updatedSchedule),
     },
     transaction: recordedTransaction,
-  };
-};
-
-const cancelSchedule = async (id, reason = '', userId) => {
-  const schedule = await prisma.recurringPaymentSchedule.findUnique({
-    where: { id },
-  });
-
-  if (!schedule) {
-    throw new NotFoundError(`Recurring payment schedule with ID ${id} not found.`);
-  }
-
-  if (schedule.status === 'CANCELLED') {
-    return schedule;
-  }
-
-  if (schedule.stripe_subscription_id) {
-    try {
-      const stripe = require('../config/stripe');
-      if (stripe && process.env.STRIPE_SECRET_KEY) {
-        await stripe.subscriptions.cancel(schedule.stripe_subscription_id);
-      }
-    } catch (stripeErr) {
-      logger.warn(`Stripe subscription cancellation warning: ${stripeErr.message}`);
-    }
-  }
-
-  const updated = await prisma.$transaction(async (tx) => {
-    const res = await tx.recurringPaymentSchedule.update({
-      where: { id },
-      data: {
-        status: 'CANCELLED',
-        auto_charge: false,
-        last_error: reason ? `Cancelled: ${reason}` : 'Cancelled by administrator',
-      },
-      include: {
-        customer: { select: { id: true, full_name: true, email: true, phone: true } },
-        booking: { select: { id: true, booking_number: true } },
-      },
-    });
-
-    await tx.auditLog.create({
-      data: {
-        user_id: userId,
-        action: 'CANCEL_RECURRING_SCHEDULE',
-        module: 'RECURRING_PAYMENT',
-        record_id: id,
-        old_value: JSON.stringify({ status: schedule.status }),
-        new_value: JSON.stringify({ status: 'CANCELLED', reason }),
-      },
-    });
-
-    return res;
-  });
-
-  logger.info(`RecurringPaymentSchedule ${id} cancelled by user ${userId}.`);
-  return {
-    ...updated,
-    calculated_state: 'CANCELLED',
   };
 };
 
@@ -688,6 +479,5 @@ module.exports = {
   updateSchedule,
   updateScheduleStatus,
   processCyclePayment,
-  cancelSchedule,
   getOverdueSchedules,
 };

@@ -14,9 +14,7 @@ const assertDriverPaymentAccess = async (payment, currentUserId, currentUserRole
     const driverProfile = await prisma.driverProfile.findUnique({
       where: { user_id: currentUserId },
     });
-    const booking = payment.booking_id
-      ? await prisma.booking.findUnique({ where: { id: payment.booking_id } })
-      : null;
+    const booking = await prisma.booking.findUnique({ where: { id: payment.booking_id } });
     if (!driverProfile || !booking || booking.assigned_driver_id !== driverProfile.id) {
       throw new ForbiddenError('You only have permission to view payments for your assigned bookings.');
     }
@@ -213,7 +211,7 @@ const recordTransaction = async (paymentId, transactionBody, currentUserId) => {
       });
 
       // 5. Cascade updates to Booking model if status becomes Paid
-      if (newStatus === 'Paid' && payment.booking_id) {
+      if (newStatus === 'Paid') {
         const booking = await tx.booking.findUnique({ where: { id: payment.booking_id } });
         if (booking) {
           await tx.booking.update({
@@ -241,12 +239,10 @@ const recordTransaction = async (paymentId, transactionBody, currentUserId) => {
   });
 
   if (updatedPayment.status === 'Paid') {
-    const booking = updatedPayment.booking_id
-      ? await prisma.booking.findUnique({ where: { id: updatedPayment.booking_id } })
-      : null;
+    const booking = await prisma.booking.findUnique({ where: { id: updatedPayment.booking_id } });
     await notificationService.createNotification({
       title: 'Payment Completed',
-      message: `Payment of $${updatedPayment.amount} completed${booking ? ` for booking ${booking.booking_number}` : ' (standalone counter payment)'}.`,
+      message: `Payment of $${updatedPayment.amount} completed for booking ${booking ? booking.booking_number : 'N/A'}.`,
       type: 'PAYMENT',
       priority: 'HIGH',
       creatorId: currentUserId,
@@ -286,7 +282,7 @@ const getPayments = async (queryFilters, currentUserId, currentUserRole) => {
     where.status = status;
   }
 
-  const [payments, total] = await Promise.all([
+  const [payments, total] = await prisma.$transaction([
     prisma.payment.findMany({
       where,
       skip,
@@ -435,7 +431,7 @@ const updatePaymentStatusManual = async (id, statusBody, currentUserId, currentU
     });
 
     // Cascade to booking if transitioned to Paid
-    if (status === 'Paid' && oldStatus !== 'Paid' && payment.booking_id) {
+    if (status === 'Paid' && oldStatus !== 'Paid') {
       const booking = await tx.booking.findUnique({ where: { id: payment.booking_id } });
       if (booking) {
         await tx.booking.update({

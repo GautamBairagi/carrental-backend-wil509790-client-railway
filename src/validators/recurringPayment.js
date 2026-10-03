@@ -1,7 +1,7 @@
 const { BadRequestError } = require('../utils/errors');
 
 const VALID_INTERVALS = ['WEEKLY', 'BIWEEKLY', 'MONTHLY'];
-const VALID_STATUSES = ['ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED', 'FAILED'];
+const VALID_STATUSES = ['ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED'];
 const VALID_PAYMENT_METHODS = ['CREDIT_DEBIT_CARD', 'ZELLE', 'CASH_APP', 'PAY_AT_DELIVERY', 'CASH', 'BANK_TRANSFER'];
 
 const validateCreateSchedule = (req, res, next) => {
@@ -13,7 +13,6 @@ const validateCreateSchedule = (req, res, next) => {
     start_date,
     next_due_date,
     end_date,
-    total_payments,
     payment_method,
     auto_charge,
   } = req.body;
@@ -22,8 +21,8 @@ const validateCreateSchedule = (req, res, next) => {
     return next(new BadRequestError('booking_id is required and must be a string.'));
   }
 
-  if (customer_id && typeof customer_id !== 'string') {
-    return next(new BadRequestError('customer_id must be a string.'));
+  if (!customer_id || typeof customer_id !== 'string') {
+    return next(new BadRequestError('customer_id is required and must be a string.'));
   }
 
   const numericAmount = Number(amount_per_cycle);
@@ -31,7 +30,7 @@ const validateCreateSchedule = (req, res, next) => {
     return next(new BadRequestError('amount_per_cycle must be a positive number greater than 0.'));
   }
 
-  if (interval && !VALID_INTERVALS.includes(interval)) {
+  if (!interval || !VALID_INTERVALS.includes(interval)) {
     return next(new BadRequestError(`interval must be one of: ${VALID_INTERVALS.join(', ')}`));
   }
 
@@ -39,8 +38,8 @@ const validateCreateSchedule = (req, res, next) => {
     return next(new BadRequestError('A valid start_date is required.'));
   }
 
-  if (next_due_date && isNaN(Date.parse(next_due_date))) {
-    return next(new BadRequestError('next_due_date must be a valid date.'));
+  if (!next_due_date || isNaN(Date.parse(next_due_date))) {
+    return next(new BadRequestError('A valid next_due_date is required.'));
   }
 
   if (end_date) {
@@ -52,15 +51,16 @@ const validateCreateSchedule = (req, res, next) => {
     }
   }
 
-  if (total_payments !== undefined) {
-    const numPayments = parseInt(total_payments, 10);
-    if (isNaN(numPayments) || numPayments <= 0) {
-      return next(new BadRequestError('total_payments must be a positive integer (e.g. 3, 5, 10).'));
-    }
-  }
-
   if (payment_method && !VALID_PAYMENT_METHODS.includes(payment_method)) {
     return next(new BadRequestError(`payment_method must be one of: ${VALID_PAYMENT_METHODS.join(', ')}`));
+  }
+
+  if (auto_charge === true) {
+    return next(
+      new BadRequestError(
+        'Automatic card charging is disabled in this phase. Recurring payment schedules are currently configured for Manual Due-Date Tracking.'
+      )
+    );
   }
 
   next();
@@ -73,7 +73,6 @@ const validateUpdateSchedule = (req, res, next) => {
     next_due_date,
     start_date,
     end_date,
-    total_payments,
     payment_method,
     auto_charge,
     status,
@@ -104,19 +103,20 @@ const validateUpdateSchedule = (req, res, next) => {
     }
   }
 
-  if (total_payments !== undefined) {
-    const numPayments = parseInt(total_payments, 10);
-    if (isNaN(numPayments) || numPayments <= 0) {
-      return next(new BadRequestError('total_payments must be a positive integer (e.g. 3, 5, 10).'));
-    }
-  }
-
   if (payment_method !== undefined && !VALID_PAYMENT_METHODS.includes(payment_method)) {
     return next(new BadRequestError(`payment_method must be one of: ${VALID_PAYMENT_METHODS.join(', ')}`));
   }
 
   if (status !== undefined && !VALID_STATUSES.includes(status)) {
     return next(new BadRequestError(`status must be one of: ${VALID_STATUSES.join(', ')}`));
+  }
+
+  if (auto_charge === true) {
+    return next(
+      new BadRequestError(
+        'Automatic card charging is disabled in this phase. Recurring payment schedules are currently configured for Manual Due-Date Tracking.'
+      )
+    );
   }
 
   next();

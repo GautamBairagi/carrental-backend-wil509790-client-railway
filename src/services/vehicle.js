@@ -137,7 +137,7 @@ const getVehicles = async (queryFilters) => {
     ];
   }
 
-  const [vehicles, total] = await Promise.all([
+  const [vehicles, total] = await prisma.$transaction([
     prisma.vehicle.findMany({
       where,
       skip,

@@ -22,6 +22,5 @@ router.put('/:id', authorize('ADMIN', 'OPERATIONS_MANAGER'), validateUpdateSched
 router.patch('/:id', authorize('ADMIN', 'OPERATIONS_MANAGER'), validateUpdateSchedule, recurringController.update);
 router.patch('/:id/status', authorize('ADMIN', 'OPERATIONS_MANAGER'), validateStatusUpdate, recurringController.updateStatus);
 router.post('/:id/process-cycle', authorize('ADMIN', 'OPERATIONS_MANAGER'), recurringController.processCycle);
-router.post('/:id/cancel', authorize('ADMIN', 'OPERATIONS_MANAGER'), recurringController.cancel);
 
 module.exports = router;

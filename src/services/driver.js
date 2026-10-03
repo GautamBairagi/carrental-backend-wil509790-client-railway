@@ -38,7 +38,7 @@ const getDrivers = async (queryFilters) => {
     where.user.name = { contains: search };
   }
 
-  const [drivers, total] = await Promise.all([
+  const [drivers, total] = await prisma.$transaction([
     prisma.driverProfile.findMany({
       where,
       skip,

@@ -38,9 +38,8 @@ router.get('/:id', authorize('ADMIN', 'OPERATIONS_MANAGER', 'DRIVER'), async (re
 
 router.post('/', authorize('ADMIN', 'OPERATIONS_MANAGER'), async (req, res, next) => {
   try {
-    const body = req.body || {};
-    const fullName = body.fullName || body.full_name;
-    const { email, phone, address, notes } = body;
+    const fullName = req.body.fullName || req.body.full_name;
+    const { email, phone, address, notes } = req.body;
 
     if (!fullName || !email || !phone) {
       throw new BadRequestError('Full name, email, and phone number are required.');
@@ -57,9 +56,7 @@ router.post('/', authorize('ADMIN', 'OPERATIONS_MANAGER'), async (req, res, next
         email,
         phone,
         address: address || 'N/A',
-        notes: notes || '',
-        driving_license_front: req.body.driving_license_front || req.body.drivingLicenseFront || null,
-        driving_license_back: req.body.driving_license_back || req.body.drivingLicenseBack || null
+        notes: notes || ''
       }
     });
     return success(res, 'Customer created successfully.', { customer }, 201);
@@ -93,13 +90,7 @@ router.put('/:id', authorize('ADMIN', 'OPERATIONS_MANAGER'), async (req, res, ne
         ...(email && { email }),
         ...(phone && { phone }),
         ...(address !== undefined && { address }),
-        ...(notes !== undefined && { notes }),
-        ...((req.body.driving_license_front !== undefined || req.body.drivingLicenseFront !== undefined) && {
-          driving_license_front: req.body.driving_license_front || req.body.drivingLicenseFront || null
-        }),
-        ...((req.body.driving_license_back !== undefined || req.body.drivingLicenseBack !== undefined) && {
-          driving_license_back: req.body.driving_license_back || req.body.drivingLicenseBack || null
-        })
+        ...(notes !== undefined && { notes })
       }
     });
     return success(res, 'Customer updated successfully.', { customer });

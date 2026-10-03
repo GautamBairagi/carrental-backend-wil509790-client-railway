@@ -11,9 +11,8 @@ const { NotFoundError, BadRequestError } = require('../utils/errors');
  * @param {string} params.priority - Enum: LOW, MEDIUM, HIGH, CRITICAL
  * @param {string|null} params.creatorId - ID of user triggering the action
  * @param {string[]} [params.specificUserIds] - Specific user IDs to direct notification to (e.g. assigned driver)
-  * @param {string[]} [params.targetRoles] - Specific roles to direct notification to (e.g. ['ADMIN', 'OPERATIONS_MANAGER'])
-  */
-const createNotification = async ({ title, message, type, priority = 'MEDIUM', creatorId = null, specificUserIds = [], targetRoles = null }) => {
+ */
+const createNotification = async ({ title, message, type, priority = 'MEDIUM', creatorId = null, specificUserIds = [] }) => {
   try {
     // Determine the preference column to check based on type
     let prefField = 'system_notifications';
@@ -21,19 +20,6 @@ const createNotification = async ({ title, message, type, priority = 'MEDIUM', c
     else if (type === 'PAYMENT') prefField = 'payment_notifications';
     else if (type === 'DELIVERY') prefField = 'delivery_notifications';
     else if (type === 'RETURN') prefField = 'return_notifications';
-
-    let resolvedTargetRoles = targetRoles;
-    if (!resolvedTargetRoles) {
-      if (priority === 'CRITICAL' || priority === 'HIGH') {
-        resolvedTargetRoles = ['ADMIN', 'OPERATIONS_MANAGER'];
-      } else if (type === 'BOOKING' || type === 'DELIVERY' || type === 'RETURN' || type === 'CONTRACT') {
-        resolvedTargetRoles = ['OPERATIONS_MANAGER'];
-      } else if (type === 'PAYMENT' || type === 'SYSTEM') {
-        resolvedTargetRoles = ['ADMIN'];
-      } else {
-        resolvedTargetRoles = ['ADMIN', 'OPERATIONS_MANAGER'];
-      }
-    }
 
     // Get all active users
     const users = await prisma.user.findMany({
@@ -44,10 +30,11 @@ const createNotification = async ({ title, message, type, priority = 'MEDIUM', c
     const recipients = [];
 
     for (const u of users) {
-      const isTargetedRole = resolvedTargetRoles.includes(u.role);
-      const isTargetedUser = specificUserIds.includes(u.id);
+      // Admins and Operations Managers always get notified by default unless muted
+      const isAdminOrOps = u.role === 'ADMIN' || u.role === 'OPERATIONS_MANAGER';
+      const isTargeted = specificUserIds.includes(u.id);
 
-      if (isTargetedRole || isTargetedUser) {
+      if (isAdminOrOps || isTargeted) {
         // Check preferences
         let isEnabled = true;
         if (u.notification_preference) {

@@ -156,7 +156,7 @@ const getReturns = async (queryFilters, currentUserId, currentUserRole) => {
     ];
   }
 
-  const [returns, total] = await Promise.all([
+  const [returns, total] = await prisma.$transaction([
     prisma.vehicleReturn.findMany({
       where,
       skip,
